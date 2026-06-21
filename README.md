@@ -5,14 +5,22 @@ touch targets, a **golf-style shot tracer** on every dart, sound + an optional
 voice caller, and 8 game modes. 100% vanilla JS/HTML/CSS — no build step, no
 server-side code, no accounts, works offline.
 
-## Put it on your iPad (same Wi-Fi as this Mac)
+## Put it on your iPad — two ways
 
-1. **Double-click `Dart Shark.app`** on your Desktop. It starts the scoreboard and
-   pops up the iPad address (e.g. `http://192.168.5.80:8099`).
-2. On the **iPad**, open **Safari** and go to that address.
-3. Tap **Share → Add to Home Screen**. Dart Shark now launches full-screen like a
-   native app. Your games & history are saved on the iPad.
-   *(Keep this Mac on the same Wi-Fi while you play.)*
+**Double-click `Dart Shark.app`** on your Desktop first (it serves the app and
+refreshes the downloadable file). Then either:
+
+**A. Home-screen app (Mac stays on, same Wi-Fi)**
+1. On the **iPad**, open **Safari** → the address it shows (e.g. `http://192.168.5.80:8099`).
+2. Tap **Share → Add to Home Screen** — launches full-screen like a native app.
+
+**B. Download & play anywhere, fully offline** ⬇️
+1. **AirDrop `Dart Shark.html`** (sitting on your Desktop) to the iPad.
+2. **Save to Files**, then open it (tap it in Files, or open in Safari). It's one
+   self-contained file — runs offline with **no Mac and no Wi-Fi**.
+
+Your games, tournaments & history are saved on the iPad either way. To rebuild the
+single file by hand: `python3 ~/dart-shark/bundle.py`.
 
 ### Want it to work anywhere, fully offline?
 Host the `~/dart-shark` folder on any free static host with **HTTPS**
@@ -31,6 +39,9 @@ this Mac is serving it.
 - **Shanghai** — round-number scoring, S+D+T = instant win.
 - **Killer** — arm on your double, knock everyone else out.
 - **Halve It** — hit the target or your score is halved.
+- **🏆 Tournament** — single-elimination bracket for 2–16 players. Pick the match
+  game + length, optional random draw; winners advance through the bracket (odd
+  counts get byes) to a crowned champion. Saves & resumes mid-bracket.
 
 ## Scoring
 Tap the **multiplier** (Single / Double / Treble), then the **number**; use
