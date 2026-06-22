@@ -189,7 +189,8 @@ button, .key, .mult, .btn, .icon-btn, .modecard, .pcard {
 .match-meta { font-size: 13px; color: var(--text-dim); font-weight: 650; text-align: center; flex: 1; }
 .game-main { flex: 1; display: flex; flex-direction: column; min-height: 0; justify-content: space-between; }
 
-.scoreboard { display: grid; gap: 10px; padding: 4px 14px 10px; }
+.scoreboard { display: grid; gap: 10px; padding: 4px 14px 10px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; align-content: start; }
+.entry { flex: none; }
 .scoreboard[data-n="1"], .scoreboard[data-n="2"] { grid-template-columns: 1fr 1fr; }
 .scoreboard[data-n="1"] { grid-template-columns: 1fr; }
 .scoreboard[data-n="3"], .scoreboard[data-n="4"] { grid-template-columns: 1fr 1fr; }
@@ -256,6 +257,8 @@ button, .key, .mult, .btn, .icon-btn, .modecard, .pcard {
 .mult[data-mult="2"][aria-pressed="true"] { background: var(--green); color: oklch(0.2 0.05 152); }
 .mult[data-mult="3"][aria-pressed="true"] { background: var(--red); color: oklch(0.98 0.02 25); }
 .mult:active { transform: scale(0.96); }
+.mult[disabled][aria-pressed="false"] { opacity: 0.34; }
+.mults.locked .mult[aria-pressed="true"] { box-shadow: 0 0 0 1.5px var(--accent); }
 
 .pad { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
 .padwrap { }
@@ -294,7 +297,8 @@ button, .key, .mult, .btn, .icon-btn, .modecard, .pcard {
   background: linear-gradient(180deg, var(--accent-2), var(--accent)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
   text-shadow: 0 8px 40px oklch(0.82 0.15 79 / 0.4); }
 .fx-big.danger { background: linear-gradient(180deg, oklch(0.78 0.2 25), var(--red)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.fx-sub { font-size: clamp(16px, 4vw, 28px); font-weight: 700; color: var(--text); margin-top: 4px; }
+.fx-total { font-size: clamp(44px, 14vw, 116px); font-variant-numeric: tabular-nums slashed-zero; }
+.fx-sub { font-size: clamp(16px, 4vw, 28px); font-weight: 700; color: var(--text); margin-top: 4px; letter-spacing: 0.04em; }
 @keyframes pop { 0% { transform: scale(0.5); opacity: 0; } 15% { transform: scale(1.08); opacity: 1; } 30% { transform: scale(1); } 75% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.04); } }
 @keyframes pop2 { 0% { transform: scale(0.5); opacity: 0; } 10% { transform: scale(1.06); opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
 .confetti { position: absolute; inset: 0; overflow: hidden; }
@@ -364,7 +368,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
   overflow: hidden; text-overflow: ellipsis; }
 .t-slot:last-child { border-bottom: 0; }
 .t-slot.won { color: var(--text); background: color-mix(in oklab, var(--accent) 12%, var(--bg-2)); font-weight: 800; }
-.t-slot.bye { color: var(--text-faint); font-style: italic; }
+.t-slot.bye, .t-slot.tbd { color: var(--text-faint); font-style: italic; }
 .t-check { color: var(--accent); font-weight: 800; flex: none; }
 
 .champ-banner { margin: 6px 16px 12px; text-align: center; background: color-mix(in oklab, var(--accent) 12%, var(--bg-2));
@@ -374,3 +378,35 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
   background: linear-gradient(180deg, var(--accent-2), var(--accent));
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .champ-sub { color: var(--text-dim); font-size: 13px; font-weight: 600; }
+.champ-third { margin-top: 8px; font-size: 14px; font-weight: 700; color: var(--text-dim); }
+
+/* edit mode + tournament structure */
+.icon-btn.edit-on { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.t-edithint { font-size: 12.5px; color: var(--accent-2); font-weight: 650; padding: 0 16px 8px; }
+.t-slot-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.t-slot.pickable { cursor: pointer; color: var(--text); }
+.t-match.editable { box-shadow: 0 0 0 1.5px var(--accent-2); }
+.t-match.editable .t-slot.pickable:active { background: color-mix(in oklab, var(--accent) 24%, var(--bg-2)); transform: scale(0.98); }
+
+/* bracket: distribute later rounds so they read like a real bracket */
+.t-bracket { flex: 1; min-height: 0; overflow-y: auto; align-items: stretch; }
+.t-col-body { display: flex; flex-direction: column; gap: 12px; flex: 1; justify-content: space-around; min-height: 0; }
+.t-col-third { border-left: 1px dashed var(--line); padding-left: 14px; }
+
+/* round-robin: standings table + fixtures */
+.t-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: calc(20px + var(--safe-b)); }
+.t-standings { background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r); overflow: hidden; margin: 4px 0 14px; }
+.t-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.t-table th { font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); padding: 9px 8px; text-align: center; border-bottom: 1px solid var(--line-soft); }
+.t-table th.t-th-name { text-align: left; }
+.t-table td { padding: 10px 8px; text-align: center; border-bottom: 1px solid var(--line-soft); color: var(--text-dim); }
+.t-table tr:last-child td { border-bottom: 0; }
+.t-table .t-rank { color: var(--text-faint); font-weight: 700; width: 28px; }
+.t-table .t-pname { text-align: left; color: var(--text); font-weight: 700; }
+.t-table .t-pts { color: var(--text); font-weight: 800; }
+.t-table tr.lead td { background: color-mix(in oklab, var(--accent) 10%, var(--bg-2)); }
+.t-table tr.lead .t-rank, .t-table tr.lead .t-pts { color: var(--accent); }
+.t-fixtures { display: flex; flex-direction: column; gap: 14px; }
+.t-rr-round .t-col-h { margin-bottom: 8px; }
+.t-rr-matches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.t-rr-matches .t-match { min-width: 0; }

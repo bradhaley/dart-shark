@@ -7,7 +7,8 @@
   var App = {
     screen: 'home', settings: null, match: null, undoStack: [],
     setupCtx: null, lastSetup: null, curMult: 1, locked: false, hasGame: false, wakeLock: null,
-    tournament: null, tMatch: null, tSetupCtx: null
+    tournament: null, tMatch: null, tSetupCtx: null, tEdit: false,
+    animating: false, _anim: null, _skipAt: 0
   };
 
   function clone(o) { try { return root.structuredClone ? structuredClone(o) : JSON.parse(JSON.stringify(o)); } catch (e) { return JSON.parse(JSON.stringify(o)); } }
@@ -21,7 +22,7 @@
     applySettings();
     registerSW();
     var tr = Store.loadTournament();
-    App.tournament = (tr && !tr.champion) ? tr : null;
+    App.tournament = (tr && tr.v === 2) ? tr : null;     // keep a finished tournament too (champion screen survives a relaunch)
     var g = Store.loadGame();
     App.hasGame = !!(g && !g.finished);
     App.match = (g && !g.finished) ? g : null;
@@ -67,10 +68,14 @@
       case 'history': html = UI.history(Store.loadHistory()); break;
       case 'settings': html = UI.settings(App.settings, isStandalone()); break;
       case 'tsetup': html = UI.tournamentSetup(App.tSetupCtx); break;
-      case 'tournament': html = UI.tournament(App.tournament, tNextMatch(App.tournament)); break;
+      case 'tournament': html = UI.tournament(App.tournament, tNextMatch(App.tournament), {
+        edit: App.tEdit,
+        live: (App.match && App.match._tMatch && !App.match.finished) ? App.match._tMatch : null,
+        standings: (App.tournament && App.tournament.format === 'rr') ? tStandings(App.tournament) : null
+      }); break;
       default:
         App.hasGame = !!(App.match && !App.match.finished);
-        html = UI.home({ hasGame: App.hasGame, hasTournament: !!App.tournament });
+        html = UI.home({ hasGame: App.hasGame, hasTournament: !!App.tournament, tournamentDone: !!(App.tournament && App.tournament.champion != null) });
     }
     appEl.innerHTML = html;
     if (App.screen === 'game') { syncMult(); requestWake(); }
@@ -79,8 +84,11 @@
     return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   }
   function syncMult() {
+    var m = App.match, M = m ? Modes[m.modeId] : null;
+    var forced = M && M.forcedMult ? M.forcedMult(m) : null;
+    var eff = forced || App.curMult;
     var btns = document.querySelectorAll('.mult');
-    for (var i = 0; i < btns.length; i++) btns[i].setAttribute('aria-pressed', (+btns[i].dataset.mult === App.curMult) + '');
+    for (var i = 0; i < btns.length; i++) btns[i].setAttribute('aria-pressed', (+btns[i].dataset.mult === eff) + '');
   }
 
   // ---------------- setup ----------------
@@ -131,7 +139,7 @@
   function snapshot() { App.undoStack.push(clone(App.match)); if (App.undoStack.length > 60) App.undoStack.shift(); }
 
   function inputDart(mult, value) {
-    var m = App.match; if (!m || m.finished) return;
+    var m = App.match; if (!m || m.finished || App.animating) return;
     if (m.turn.darts.length >= 3) return;
     var d = value === 0 ? E.miss() : E.dart(mult, value);
     snapshot();
@@ -140,7 +148,7 @@
     m.turn.scored = (m.turn.scored || 0) + (res.scored || 0);
     m.turn.marks = (m.turn.marks || 0) + (res.marks || 0);
     App.curMult = 1;
-    if (value !== 0 && App.settings.tracer && root.Tracer) root.Tracer.shoot(d);
+    // tracers no longer fire per dart — they replay together when the visit ends
     if (value === 0) Sound.play('dart');
     else if (res.event === 'advance') Sound.play('advance');
     else Sound.play('tick');
@@ -149,10 +157,13 @@
   }
 
   function handleNext() {
-    var m = App.match; if (!m || m.finished) return;
+    var m = App.match; if (!m || m.finished || App.animating) return;
     snapshot();
     endVisit({ skipped: true });
   }
+
+  // replay timing (ms): each dart launches REPLAY_GAP apart, the total pops after the last lands and holds TOTAL_HOLD
+  var REPLAY_GAP = 480, REPLAY_LAND = 380, TOTAL_HOLD = 950;
 
   function endVisit(res) {
     var m = App.match, M = Modes[m.modeId], i = m.current;
@@ -164,19 +175,83 @@
     s.marks += (m.turn.marks || 0);
     s.rounds += 1;
     if (vp > s.high) s.high = vp;
-
-    var win = !!(res.win || endRes.win || m._win != null);
-    var winner = m._win != null ? m._win : i;
-    var isShanghai = !!m._shanghai;
-
     // checkout record (x01 finishing visit)
     if (M.id === 'x01' && res.win && m.turn.snap) { var co = m.turn.snap.score; if (co > s.bestCheckout) s.bestCheckout = co; }
 
-    // celebration (priority order); skip scoring cheers when busting
-    if (win) {
-      handleWin(winner, isShanghai);
-      return;
+    var ctx = {
+      M: M, i: i, vp: vp, res: res, endRes: endRes, name: m.players[i].name,
+      win: !!(res.win || endRes.win || m._win != null),
+      winner: m._win != null ? m._win : i,
+      isShanghai: !!m._shanghai,
+      darts: m.turn.darts.slice()
+    };
+
+    if (App.settings.tracer && root.Tracer && root.Tracer.shoot && ctx.darts.some(isScoringDart)) {
+      App.animating = true;
+      render();                       // show all three darts in the strip; input is locked while the replay runs
+      playReplay(ctx);                // fire the tracers one by one, then pop the visit total, then advance
+    } else {
+      finishVisitImmediate(ctx);      // tracer off / nothing to trace — original instant behavior
     }
+  }
+
+  function isScoringDart(d) { return !!d && d.mult !== 0; }
+
+  // tracer ON: send each dart one at a time, then the total popup, then advance
+  function playReplay(ctx) {
+    var scoring = ctx.darts.filter(isScoringDart), idx = 0;
+    App._anim = { ctx: ctx, timers: [], phase: 'replay', done: false };
+    (function step() {
+      if (!App._anim || App._anim.done) return;
+      if (idx < scoring.length) {
+        root.Tracer.shoot(scoring[idx]); idx++;
+        App._anim.timers.push(setTimeout(step, REPLAY_GAP));
+      } else {
+        App._anim.timers.push(setTimeout(function () { showTotalThenAdvance(ctx); }, REPLAY_LAND));
+      }
+    })();
+  }
+
+  function showTotalThenAdvance(ctx) {
+    if (!App._anim || App._anim.done) return;
+    App._anim.phase = 'total'; App._anim.timers = [];
+    if (ctx.win) { endReplay(); handleWin(ctx.winner, ctx.isShanghai); return; }
+    if (ctx.endRes.event === 'halve') { Sound.play('halve'); UI.celebrate('halve', 'HALVED', ctx.name + ' missed'); }
+    else if (ctx.endRes.event === 'eliminated') { Sound.play('eliminated'); UI.celebrate('eliminated', 'OUT', ctx.name); }
+    else {
+      var kind = ctx.res.event === 'bust' ? 'bust' : ctx.vp === 180 ? '180' : ctx.vp >= 100 ? 'ton' : 'score';
+      UI.turnTotal(kind === 'bust' ? 0 : ctx.vp, kind);
+      playScoreSound(ctx, kind);
+    }
+    App._anim.timers.push(setTimeout(function () { endReplay(); rotate(); persist(); render(); }, TOTAL_HOLD));
+  }
+
+  function playScoreSound(ctx, kind) {
+    var s = App.match.stats[ctx.i];
+    if (kind === 'bust') Sound.play('bust');
+    else if (kind === '180') { s.c180++; Sound.play('big180'); if (App.settings.voice) Sound.callScore(180); }
+    else if (kind === 'ton') { s.cTon++; Sound.play('ton'); if (App.settings.voice) Sound.callScore(ctx.vp); }
+    else if (App.settings.voice && (ctx.M.id === 'x01' || ctx.M.id === 'countup') && ctx.vp > 0) Sound.callScore(ctx.vp);
+  }
+
+  function endReplay() { App.animating = false; if (App._anim) { App._anim.done = true; App._anim.timers.forEach(clearTimeout); } App._anim = null; }
+
+  // a tap during the replay fast-forwards it
+  function skipReplay() {
+    if (!App._anim || App._anim.done) return;
+    var ctx = App._anim.ctx, phase = App._anim.phase;
+    App._anim.timers.forEach(clearTimeout); App._anim.timers = [];
+    App._skipAt = nowMs();
+    if (root.Tracer && root.Tracer.clear) root.Tracer.clear();
+    if (phase === 'replay') showTotalThenAdvance(ctx);
+    else { endReplay(); rotate(); persist(); render(); }
+  }
+  function nowMs() { return root.performance && performance.now ? performance.now() : Date.now(); }
+
+  // tracer OFF: original synchronous celebration + advance
+  function finishVisitImmediate(ctx) {
+    var m = App.match, M = ctx.M, i = ctx.i, vp = ctx.vp, res = ctx.res, endRes = ctx.endRes, s = m.stats[i];
+    if (ctx.win) { handleWin(ctx.winner, ctx.isShanghai); return; }
     if (res.event === 'bust') { Sound.play('bust'); UI.celebrate('bust', 'BUST', 'no score'); }
     else if (endRes.event === 'halve') { Sound.play('halve'); UI.celebrate('halve', 'HALVED', m.players[i].name + ' missed'); }
     else if (endRes.event === 'eliminated') { Sound.play('eliminated'); UI.celebrate('eliminated', 'OUT', m.players[i].name); }
@@ -184,7 +259,6 @@
     else if (vp >= 140 && (M.id === 'x01')) { Sound.play('ton'); UI.toast(vp + '!  Big score'); if (App.settings.voice) Sound.callScore(vp); }
     else if (vp >= 100 && (M.id === 'x01' || M.id === 'countup')) { s.cTon++; Sound.play('ton'); UI.toast(vp + '!  Ton+'); if (App.settings.voice) Sound.callScore(vp); }
     else if (App.settings.voice && (M.id === 'x01' || M.id === 'countup') && vp > 0) Sound.callScore(vp);
-
     rotate();
     persist(); render();
   }
@@ -272,76 +346,171 @@
   }
   function avg3num(s) { return s.darts ? (s.points / s.darts) * 3 : 0; }
 
-  // ---------------- tournament (single-elimination bracket) ----------------
+  // ---------------- tournament (knockout + round-robin) ----------------
+  // Entrants carry a stable numeric id; matches store ids (NOT names) so duplicate names never corrupt a draw.
   var ROUND_NAMES = { 1: 'Final', 2: 'Semi-finals', 4: 'Quarter-finals', 8: 'Round of 16', 16: 'Round of 32' };
-  function roundName(matchesInRound) { return ROUND_NAMES[matchesInRound] || ('Round of ' + matchesInRound * 2); }
+  function roundLabelByCount(inRound) { return ROUND_NAMES[inRound] || ('Round of ' + inRound * 2); }
 
   function shuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function dedupeNames(names) {
+    var seen = {};
+    return names.map(function (nm) { if (seen[nm] === undefined) { seen[nm] = 1; return nm; } seen[nm] += 1; return nm + ' (' + seen[nm] + ')'; });
+  }
 
-  function buildTournament(names, modeId, config, seedRandom) {
+  function tName(t, id) { if (id == null) return null; for (var i = 0; i < t.entrants.length; i++) if (t.entrants[i].id === id) return t.entrants[i].name; return null; }
+  function tGetMatch(t, ref) {
+    if (!t || !ref) return null;
+    if (ref.kind === 'rr') return t.fixtures[ref.i];
+    if (ref.kind === 'third') return t.third;
+    return t.rounds[ref.round][ref.match];
+  }
+  function sameRef(a, b) { return !!a && !!b && a.kind === b.kind && a.round === b.round && a.match === b.match && a.i === b.i; }
+  function parseRef(s) {
+    var p = s.split(':');
+    if (p[0] === 'rr') return { ref: { kind: 'rr', i: +p[1] }, slot: p[2] };
+    if (p[0] === 'third') return { ref: { kind: 'third' }, slot: p[1] };
+    return { ref: { kind: 'se', round: +p[1], match: +p[2] }, slot: p[3] };
+  }
+
+  // standard seed-slot order for a bracket of `size` (power of 2): byes land on the top seeds and spread out
+  function seedSlots(size) {
+    var rounds = Math.round(Math.log(size) / Math.log(2)), seeds = [1, 2];
+    for (var r = 1; r < rounds; r++) {
+      var out = [], sum = Math.pow(2, r + 1) + 1;
+      for (var i = 0; i < seeds.length; i++) { out.push(seeds[i]); out.push(sum - seeds[i]); }
+      seeds = out;
+    }
+    return seeds;
+  }
+
+  function buildTournament(names, modeId, config, opts) {
+    opts = opts || {};
     names = names.map(function (n, i) { return (String(n || '').trim()) || ('Player ' + (i + 1)); });
-    if (seedRandom) names = shuffle(names.slice());
-    var size = 2; while (size < names.length) size *= 2;
-    var slots = names.slice(); while (slots.length < size) slots.push(null);   // pad with byes
+    names = dedupeNames(names);
+    var entrants = names.map(function (nm, i) { return { id: i, name: nm, seed: i + 1 }; });
+    if (opts.seed === 'random') { var ids = shuffle(entrants.map(function (e) { return e.id; })); ids.forEach(function (id, s) { entrants[id].seed = s + 1; }); }
+    var t = { v: 2, format: opts.format || 'se', modeId: modeId, config: clone(config),
+      modeName: Modes[modeId].name, entrants: entrants, champion: null, createdAt: Date.now() };
+    if (t.format === 'rr') buildRR(t); else buildSE(t, opts);
+    return t;
+  }
+
+  function buildSE(t, opts) {
+    var n = t.entrants.length, size = 2; while (size < n) size *= 2;
+    var order = seedSlots(size), bySeed = {};
+    t.entrants.forEach(function (e) { bySeed[e.seed] = e.id; });
+    var slots = order.map(function (s) { return bySeed[s] !== undefined ? bySeed[s] : null; });
     var rounds = [], r0 = [];
     for (var i = 0; i < size; i += 2) r0.push({ a: slots[i], b: slots[i + 1], winner: null });
     rounds.push(r0);
     var count = r0.length;
     while (count > 1) { var rr = []; for (var j = 0; j < count / 2; j++) rr.push({ a: null, b: null, winner: null }); rounds.push(rr); count = count / 2; }
-    var t = { modeId: modeId, config: clone(config), modeName: Modes[modeId].name, names: names,
-      rounds: rounds, champion: null, createdAt: Date.now() };
-    tResolve(t);
-    return t;
+    t.rounds = rounds;
+    t.third = (opts.thirdPlace && t.entrants.length >= 4) ? { a: null, b: null, winner: null } : null;
+    tResolveSE(t);
   }
 
-  function tResolve(t) {
-    for (var r = 0; r < t.rounds.length; r++) {
-      var round = t.rounds[r];
-      for (var k = 0; k < round.length; k++) {
-        var mt = round[k];
-        if (mt.winner == null) {                                  // bye auto-advance
-          if (mt.a && !mt.b) mt.winner = mt.a;
-          else if (mt.b && !mt.a) mt.winner = mt.b;
-        }
-        if (mt.winner != null && r + 1 < t.rounds.length) {
-          var nm = t.rounds[r + 1][Math.floor(k / 2)];
+  function buildRR(t) {
+    var ids = t.entrants.slice().sort(function (a, b) { return a.seed - b.seed; }).map(function (e) { return e.id; });
+    var arr = ids.slice(); if (arr.length % 2 === 1) arr.push(null);
+    var nn = arr.length, roundsCount = nn - 1, half = nn / 2, rot = arr.slice(), fixtures = [];
+    for (var r = 0; r < roundsCount; r++) {
+      for (var i = 0; i < half; i++) { var a = rot[i], b = rot[nn - 1 - i]; if (a != null && b != null) fixtures.push({ a: a, b: b, winner: null, round: r }); }
+      var fixed = rot[0], rest = rot.slice(1); rest.unshift(rest.pop()); rot = [fixed].concat(rest);
+    }
+    t.fixtures = fixtures; t.champion = null;
+  }
+
+  function loserOf(mt) { if (!mt || mt.winner == null || mt.a == null || mt.b == null) return null; return mt.winner === mt.a ? mt.b : mt.a; }
+
+  function tResolveSE(t) {
+    var rounds = t.rounds, r, k;
+    for (r = 1; r < rounds.length; r++) for (k = 0; k < rounds[r].length; k++) { rounds[r][k].a = null; rounds[r][k].b = null; }
+    for (r = 0; r < rounds.length; r++) {
+      for (k = 0; k < rounds[r].length; k++) {
+        var mt = rounds[r][k];
+        if (mt.winner == null) { if (mt.a != null && mt.b == null) mt.winner = mt.a; else if (mt.b != null && mt.a == null) mt.winner = mt.b; }
+        if (mt.winner != null && mt.winner !== mt.a && mt.winner !== mt.b) mt.winner = null;     // drop a winner invalidated by an edit
+        if (mt.winner != null && r + 1 < rounds.length) {
+          var nm = rounds[r + 1][Math.floor(k / 2)];
           if (k % 2 === 0) nm.a = mt.winner; else nm.b = mt.winner;
         }
       }
     }
-    var last = t.rounds[t.rounds.length - 1][0];
-    t.champion = last.winner || null;
+    if (t.third && rounds.length >= 2) {
+      var semis = rounds[rounds.length - 2];
+      if (semis.length === 2) {
+        t.third.a = loserOf(semis[0]); t.third.b = loserOf(semis[1]);
+        if (t.third.winner != null && t.third.winner !== t.third.a && t.third.winner !== t.third.b) t.third.winner = null;
+      }
+    }
+    t.champion = rounds[rounds.length - 1][0].winner;
+    if (t.champion === undefined) t.champion = null;
+  }
+
+  function tResolveRR(t) {
+    var done = t.fixtures.length > 0 && t.fixtures.every(function (f) { return f.winner != null; });
+    var top = done ? tStandings(t)[0] : null;
+    t.champion = top ? top.id : null;
+  }
+  function tResolve(t) { if (t.format === 'rr') tResolveRR(t); else tResolveSE(t); }
+
+  function tStandings(t) {
+    var rec = {};
+    t.entrants.forEach(function (e) { rec[e.id] = { id: e.id, name: e.name, seed: e.seed, played: 0, wins: 0, losses: 0, h2h: {} }; });
+    (t.fixtures || []).forEach(function (f) {
+      if (f.winner == null) return;
+      var loser = f.winner === f.a ? f.b : f.a;
+      rec[f.winner].wins++; rec[f.winner].played++; rec[f.winner].h2h[loser] = (rec[f.winner].h2h[loser] || 0) + 1;
+      rec[loser].losses++; rec[loser].played++;
+    });
+    var arr = Object.keys(rec).map(function (key) { return rec[key]; });
+    arr.sort(function (a, b) {
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      var ah = a.h2h[b.id] || 0, bh = b.h2h[a.id] || 0; if (ah !== bh) return bh - ah;
+      if (a.losses !== b.losses) return a.losses - b.losses;
+      return a.seed - b.seed;
+    });
+    arr.forEach(function (row, i) { row.rank = i + 1; });
+    return arr;
   }
 
   function tNextMatch(t) {
     if (!t) return null;
-    for (var r = 0; r < t.rounds.length; r++) {
-      var round = t.rounds[r];
-      for (var k = 0; k < round.length; k++) {
-        var mt = round[k];
-        if (mt.a && mt.b && mt.winner == null) return { round: r, match: k };
-      }
+    if (t.format === 'rr') { for (var i = 0; i < t.fixtures.length; i++) if (t.fixtures[i].winner == null) return { kind: 'rr', i: i }; return null; }
+    for (var r = 0; r < t.rounds.length; r++) for (var k = 0; k < t.rounds[r].length; k++) {
+      var mt = t.rounds[r][k];
+      if (mt.a != null && mt.b != null && mt.winner == null) return { kind: 'se', round: r, match: k };
     }
+    if (t.third && t.third.a != null && t.third.b != null && t.third.winner == null) return { kind: 'third' };
     return null;
+  }
+
+  function tRefLabel(t, ref) {
+    if (!ref) return 'Tournament';
+    if (ref.kind === 'third') return 'Third-place playoff';
+    if (ref.kind === 'rr') return 'Round-robin';
+    return roundLabelByCount(t.rounds[ref.round].length);
   }
 
   function openTournamentSetup() {
     var names = Store.loadPlayers();
     if (!names || names.length < 2) names = ['Player 1', 'Player 2', 'Player 3', 'Player 4'];
-    App.tSetupCtx = { names: names.slice(0, 16), modeId: 'x01', start: 501, legsToWin: 1, seedRandom: true };
-    App.screen = 'tsetup'; render();
+    App.tSetupCtx = { names: names.slice(0, 16), modeId: 'x01', start: 501, legsToWin: 1, seed: 'random', format: 'se', thirdPlace: true };
+    App.tEdit = false; App.screen = 'tsetup'; render();
   }
 
   function startTournament() {
     syncNamesT();
     var ctx = App.tSetupCtx;
-    var names = ctx.names.filter(function (n) { return String(n || '').trim() !== ''; });
+    var names = ctx.names.map(function (n) { return String(n || '').trim(); }).filter(function (n) { return n !== ''; });
     if (names.length < 2) { UI.toast('Add at least 2 players'); return; }
     Store.savePlayers(names);
     var cfg = clone(Modes[ctx.modeId].defaults || {});
-    cfg.setsToWin = 1; cfg.legsToWin = ctx.legsToWin || 1;
+    cfg.setsToWin = 1; cfg.legsToWin = Modes[ctx.modeId].supportsLegs ? (ctx.legsToWin || 1) : 1;
     if (ctx.modeId === 'x01') cfg.start = ctx.start;
-    App.tournament = buildTournament(names, ctx.modeId, cfg, ctx.seedRandom);
+    App.tournament = buildTournament(names, ctx.modeId, cfg, { format: ctx.format, seed: ctx.seed, thirdPlace: ctx.thirdPlace });
+    App.tMatch = null; App.tEdit = false;
     Store.saveTournament(App.tournament);
     App.screen = 'tournament'; render();
   }
@@ -352,30 +521,53 @@
   }
 
   function tPlayNext() {
-    var t = App.tournament, pos = tNextMatch(t);
-    if (!pos) return;
-    var mt = t.rounds[pos.round][pos.match];
-    startMatch(t.modeId, t.config, [mt.a, mt.b]);
-    App.tMatch = pos;                                              // set AFTER startMatch (it clears it)
-    App.match._tMatch = pos;                                       // so a mid-match resume re-links
-    persistNow();
+    var t = App.tournament, ref = tNextMatch(t);
+    if (!ref) return;
+    if (App.match && App.match._tMatch && sameRef(App.match._tMatch, ref) && !App.match.finished) {
+      App.tMatch = ref; App.tEdit = false; App.screen = 'game'; render(); return;   // resume the saved in-progress match
+    }
+    var mt = tGetMatch(t, ref);
+    startMatch(t.modeId, t.config, [tName(t, mt.a), tName(t, mt.b)]);
+    App.tMatch = ref;
+    App.match._tMatch = ref;                              // startMatch already rendered without these — re-render
+    App.match._tInfo = { label: tRefLabel(t, ref) };
+    persistNow(); render();
   }
 
+  function tBackToBracket() { persistNow(); App.tEdit = false; App.screen = 'tournament'; render(); }
+
   function tournamentMatchDone(i) {
-    var t = App.tournament, pos = App.tMatch;
-    var winnerName = App.match.players[i].name;
-    t.rounds[pos.round][pos.match].winner = winnerName;
+    var t = App.tournament, ref = App.tMatch, mt = tGetMatch(t, ref);
+    if (mt) mt.winner = (i === 0) ? mt.a : mt.b;     // winner by SEAT (0/1) — never by name
     tResolve(t);
     App.tMatch = null; App.match = null;
     Store.clearGame();
     Store.saveTournament(t);
     App.screen = 'tournament';
     render();
-    if (t.champion) {
+    if (t.champion != null && tNextMatch(t) == null) {
       Sound.play('match');
-      UI.celebrate('win', 'CHAMPION', t.champion + ' wins the tournament', true);
-      if (App.settings.voice) Sound.say('Champion, ' + t.champion);
+      UI.celebrate('win', 'CHAMPION', tName(t, t.champion) + ' wins the tournament', true);
+      if (App.settings.voice) Sound.say('Champion, ' + tName(t, t.champion));
     }
+  }
+
+  function tEditResult(ref, slot) {
+    var t = App.tournament, mt = tGetMatch(t, ref);
+    if (!mt || mt.a == null || mt.b == null) return;
+    var id = slot === 'a' ? mt.a : mt.b;
+    if (mt.winner === id) return;
+    var msg = t.format === 'se'
+      ? 'Set ' + tName(t, id) + ' as the winner? Later matches that follow from this will be reset.'
+      : 'Set ' + tName(t, id) + ' as the winner of this match?';
+    if (root.confirm && !root.confirm(msg)) return;
+    mt.winner = id; tResolve(t); Store.saveTournament(t); render(); UI.toast('Result updated');
+  }
+
+  function tNewTournament() {
+    if (App.tournament && App.tournament.champion == null && root.confirm && !root.confirm('Discard the current tournament and start a new one?')) return;
+    Store.clearTournament(); App.tournament = null; App.tMatch = null; App.tEdit = false;
+    openTournamentSetup();
   }
 
   function undo() {
@@ -394,6 +586,11 @@
   function attachHandlers() {
     // low-latency scoring via pointerdown + lockout (kills iOS double-count)
     document.addEventListener('pointerdown', function (e) {
+      if (App.animating) {                                  // a tap during the dart replay fast-forwards it
+        Sound.unlock();
+        if (App.screen === 'game') { if (e.cancelable) e.preventDefault(); skipReplay(); }
+        return;
+      }
       var k = e.target.closest && e.target.closest('.key, .mult');
       if (!k) { Sound.unlock(); return; }
       e.preventDefault();
@@ -410,11 +607,15 @@
       var num = +k.dataset.num;
       var mult = k.dataset.mult ? +k.dataset.mult : App.curMult;
       if (num === 0) mult = 0;
+      else if (!k.dataset.mult && App.match) {           // modes that demand a fixed multiplier (around: doubles/trebles)
+        var Mk = Modes[App.match.modeId]; var fm = Mk.forcedMult ? Mk.forcedMult(App.match) : null; if (fm) mult = fm;
+      }
       inputDart(mult, num);
     }, { passive: false });
 
     appEl.addEventListener('click', function (e) {
-      var t = e.target.closest('[data-act],[data-mode],[data-cfg],[data-toggle],[data-step],[data-rm],[data-set],[data-theme-set],[data-tmode],[data-tlegs],[data-tstart],[data-trm],.modecard');
+      if (App.animating || (nowMs() - (App._skipAt || 0) < 400)) return;   // ignore the click that follows a skip tap
+      var t = e.target.closest('[data-act],[data-mode],[data-cfg],[data-toggle],[data-step],[data-rm],[data-set],[data-theme-set],[data-tmode],[data-tlegs],[data-tstart],[data-trm],[data-tformat],[data-tseedmode],[data-tpick],.modecard');
       if (!t) return;
       if (t.classList.contains('key') || t.classList.contains('mult')) return;
       handleClick(t);
@@ -437,7 +638,10 @@
     if (ds.tmode) { syncNamesT(); App.tSetupCtx.modeId = ds.tmode; render(); return; }
     if (ds.tlegs) { syncNamesT(); App.tSetupCtx.legsToWin = +ds.tlegs; render(); return; }
     if (ds.tstart) { syncNamesT(); App.tSetupCtx.start = +ds.tstart; render(); return; }
+    if (ds.tformat) { syncNamesT(); App.tSetupCtx.format = ds.tformat; render(); return; }
+    if (ds.tseedmode) { syncNamesT(); App.tSetupCtx.seed = ds.tseedmode; render(); return; }
     if (ds.trm !== undefined) { App.tSetupCtx.names.splice(+ds.trm, 1); render(); return; }
+    if (ds.tpick !== undefined) { var pk = parseRef(ds.tpick); tEditResult(pk.ref, pk.slot); return; }
     if (ds.cfg) { setConfig(ds.cfg, ds.val); syncNames(); render(); return; }
     if (ds.toggle) { var key = ds.toggle; App.setupCtx.config[key] = !App.setupCtx.config[key]; syncNames(); render(); return; }
     if (ds.step) { stepConfig(ds.step, +ds.d); syncNames(); render(); return; }
@@ -450,17 +654,19 @@
     switch (act) {
       case 'home': goHome(); break;
       case 'menu': persistNow(); App.screen = 'home'; render(); break;
-      case 'resume': App.screen = 'game'; App.undoStack = []; render(); break;
+      case 'resume': App.screen = 'game'; render(); break;
       case 'history': App.screen = 'history'; render(); break;
       case 'settings': App.screen = 'settings'; render(); break;
       case 'tournament': openTournamentSetup(); break;
-      case 'resumetourney': App.screen = 'tournament'; render(); break;
+      case 'resumetourney': App.tEdit = false; App.screen = 'tournament'; render(); break;
       case 'tstart': startTournament(); break;
       case 'tplay': tPlayNext(); break;
       case 'taddp': syncNamesT(); if (App.tSetupCtx.names.length < 16) { App.tSetupCtx.names.push('Player ' + (App.tSetupCtx.names.length + 1)); render(); } break;
-      case 'tseed': syncNamesT(); App.tSetupCtx.seedRandom = !App.tSetupCtx.seedRandom; render(); break;
-      case 'tnew': Store.clearTournament(); App.tournament = null; App.tMatch = null; openTournamentSetup(); break;
-      case 'texit': App.screen = 'home'; render(); break;
+      case 'tthird': syncNamesT(); App.tSetupCtx.thirdPlace = !App.tSetupCtx.thirdPlace; render(); break;
+      case 'tedit': App.tEdit = !App.tEdit; render(); break;
+      case 'tbracket': tBackToBracket(); break;
+      case 'tnew': tNewTournament(); break;
+      case 'texit': App.tEdit = false; App.screen = 'home'; render(); break;
       case 'install': installHint(); break;
       case 'addp': addPlayer(); break;
       case 'start': doStart(); break;
@@ -546,6 +752,9 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
+
+  // pure tournament helpers exposed for tests/scripting (no side effects)
+  App._t = { build: buildTournament, resolve: tResolve, standings: tStandings, next: tNextMatch, name: tName, get: tGetMatch, seedSlots: seedSlots };
 
   root.DartShark = root.OCHE = App;
 })(typeof window !== 'undefined' ? window : this);

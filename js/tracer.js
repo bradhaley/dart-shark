@@ -286,5 +286,14 @@
 
   function setEnabled(b) { enabled = !!b; if (!b && ctx) ctx.clearRect(0, 0, W, H); }
 
-  root.Tracer = { shoot: shoot, setEnabled: setEnabled, isEnabled: function () { return enabled; } };
+  // stop everything immediately (used when a replay is fast-forwarded)
+  function clear() {
+    shots.length = 0;
+    for (var k = 0; k < MAXP; k++) P[k].life = 0;
+    boardFade = 0;
+    if (raf && root.cancelAnimationFrame) { root.cancelAnimationFrame(raf); raf = 0; }
+    if (ctx) ctx.clearRect(0, 0, W, H);
+  }
+
+  root.Tracer = { shoot: shoot, setEnabled: setEnabled, isEnabled: function () { return enabled; }, clear: clear };
 })(typeof window !== 'undefined' ? window : this);

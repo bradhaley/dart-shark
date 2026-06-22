@@ -55,7 +55,8 @@
     display: function (m, i) {
       var p = m.ps[i], target = null;
       if (i === m.current && p.opened) {
-        if (E.isBogey(p.score) || p.score > 170) target = p.score <= 170 ? 'No 3-dart out' : null;
+        if (m.config.doubleOut && p.score === 1) target = 'Stuck on 1 — needs a bust';
+        else if (E.isBogey(p.score) || p.score > 170) target = p.score <= 170 ? 'No 3-dart out' : null;
         else if (p.score <= 170 && p.score >= 2) {
           var r = E.checkoutRoute(p.score, dartsLeft(m), { doubleOut: m.config.doubleOut, straightOut: !m.config.doubleOut, preferredDouble: m.config.preferredDouble });
           target = r ? E.routeLabel(r) : (p.score <= 170 ? 'No 3-dart out' : null);
@@ -147,6 +148,7 @@
     configFields: [{ key: 'mode', label: 'Must hit', type: 'select', options: [['single', 'Any (singles)'], ['double', 'Doubles only'], ['treble', 'Trebles only']] }],
     init: function (m) { m.ps = m.players.map(function () { return { idx: 0 }; }); },
     beginTurn: function () {},
+    forcedMult: function (m) { return m.config.mode === 'double' ? 2 : m.config.mode === 'treble' ? 3 : null; },
     applyDart: function (m, d) {
       var p = m.ps[m.current], last = dartsLeft(m) === 0, target = SEQ[p.idx];
       var need = m.config.mode;
@@ -158,7 +160,9 @@
     },
     display: function (m, i) {
       var p = m.ps[i], t = p.idx >= SEQ.length ? '✓' : SEQ[p.idx];
-      return { primary: t === 25 ? 'Bull' : t, sub: p.idx >= SEQ.length ? 'finished' : 'on ' + (p.idx + 1) + ' / 21', target: i === m.current && p.idx < SEQ.length ? 'Aim: ' + (SEQ[p.idx] === 25 ? 'Bull' : SEQ[p.idx]) : null };
+      var pre = m.config.mode === 'double' ? 'D' : m.config.mode === 'treble' ? 'T' : '';
+      var aimVal = p.idx < SEQ.length ? (SEQ[p.idx] === 25 ? 'Bull' : (pre && !(SEQ[p.idx] === 25 && pre === 'T') ? pre + SEQ[p.idx] : SEQ[p.idx])) : null;
+      return { primary: t === 25 ? 'Bull' : t, sub: p.idx >= SEQ.length ? 'finished' : 'on ' + (p.idx + 1) + ' / 21', target: i === m.current && aimVal != null ? 'Aim: ' + aimVal : null };
     },
     allow: function (m, v) { return { D: true, T: v !== 25 }; },
     statLines: function (m, i) { return [{ label: 'Reached', value: m.ps[i].idx >= SEQ.length ? 'Bull ✓' : (SEQ[m.ps[i].idx]) }, { label: 'Darts', value: m.stats[i].darts }]; },
@@ -186,7 +190,7 @@
   // ---------------------------------------------------------------- Bob's 27
   var bobs = {
     id: 'bobs27', name: "Bob's 27", tagline: 'Doubles gauntlet: D1…D20. Start on 27, miss a double and pay.',
-    goal: 'Survive & score highest', badge: '27', supportsLegs: false, roundBased: true,
+    goal: 'Survive & score highest', badge: '27', supportsLegs: false, roundBased: true, noBull: true,
     defaults: {},
     init: function (m) { m.ps = m.players.map(function () { return { total: 27, out: false }; }); m.roundLimit = 20; },
     beginTurn: function (m) { m.turn.hits = 0; },
@@ -209,7 +213,7 @@
   // ---------------------------------------------------------------- Shanghai
   var shanghai = {
     id: 'shanghai', name: 'Shanghai', tagline: 'Rounds 1–7. Only the round number scores. S+D+T = instant win!',
-    goal: 'Highest score (or a Shanghai!)', badge: '上', supportsLegs: false, roundBased: true,
+    goal: 'Highest score (or a Shanghai!)', badge: '上', supportsLegs: false, roundBased: true, noBull: true,
     defaults: { rounds: 7 },
     configFields: [{ key: 'rounds', label: 'Rounds', type: 'select', options: [[7, '1–7 (classic)'], [20, '1–20 (long)']] }],
     init: function (m) { m.ps = m.players.map(function () { return { total: 0 }; }); m.roundLimit = m.config.rounds; },
@@ -232,7 +236,7 @@
   // ---------------------------------------------------------------- Killer
   var killer = {
     id: 'killer', name: 'Killer', tagline: 'Hit your double to arm up, then knock out everyone else.',
-    goal: 'Last player standing', badge: '☠', supportsLegs: false,
+    goal: 'Last player standing', badge: '☠', supportsLegs: false, noBull: true,
     defaults: { lives: 3, selfKill: true },
     configFields: [{ key: 'lives', label: 'Lives', type: 'number', min: 1, max: 9 }],
     init: function (m) {
@@ -272,7 +276,7 @@
       return { primary: p.out ? '☠' : '#' + p.number, sub: p.out ? 'eliminated' : (p.killer ? 'ARMED' : 'hit D' + p.number + ' to arm'), lives: { n: p.lives, max: m.config.lives, killer: p.killer, out: p.out } };
     },
     allow: function (m, v) { return { D: true, T: v !== 25 }; },
-    statLines: function (m, i) { return [{ label: 'Number', value: '#' + m.ps[i].number }, { label: 'Lives', value: m.ps[i].out ? 0 : m.ps[i].lives }, { label: 'Armed', value: m.ps[i].killer ? 'yes' : 'no' }]; }
+    statLines: function (m, i) { return [{ label: 'Lives', value: m.ps[i].out ? 0 : m.ps[i].lives }, { label: 'Number', value: '#' + m.ps[i].number }, { label: 'Armed', value: m.ps[i].killer ? 'yes' : 'no' }]; }
   };
 
   // ---------------------------------------------------------------- Halve It

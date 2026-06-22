@@ -1,3 +1,6 @@
 Dart Shark.html
 *.log
 .DS_Store
+
+# local preview config (machine-specific paths)
+.claude/

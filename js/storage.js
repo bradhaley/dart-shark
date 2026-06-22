@@ -5,7 +5,7 @@
   var K_HIST = 'oche.history.v1';
   var K_SET = 'oche.settings.v1';
   var K_PLAYERS = 'oche.players.v1';
-  var K_TOURN = 'oche.tournament.v1';
+  var K_TOURN = 'oche.tournament.v2';   // v2 = id-based entrants + formats (SE/round-robin); v1 ignored
 
   function read(key, fallback) {
     try { var v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; }

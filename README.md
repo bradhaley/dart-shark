@@ -39,9 +39,16 @@ this Mac is serving it.
 - **Shanghai** — round-number scoring, S+D+T = instant win.
 - **Killer** — arm on your double, knock everyone else out.
 - **Halve It** — hit the target or your score is halved.
-- **🏆 Tournament** — single-elimination bracket for 2–16 players. Pick the match
-  game + length, optional random draw; winners advance through the bracket (odd
-  counts get byes) to a crowned champion. Saves & resumes mid-bracket.
+- **🏆 Tournament** — for 2–16 players, two formats:
+  - **Knockout** — seeded single-elimination bracket. Byes go to the top seeds and
+    are spread out (balanced draw), with an optional **third-place playoff**.
+  - **Round-robin** — everyone plays everyone once; a live **standings table**
+    (played / won / lost / points) crowns the best record.
+  Pick the match game + length (random or seeded draw). Each match shows a
+  **🏆 round HUD** and a *‹ Bracket* button so you can step out and **resume** mid-
+  match. Mis-tapped a result? **Edit** any finished match — knockout edits cascade
+  and reset the rounds that followed. Players are tracked by id, so duplicate names
+  never break the draw. Saves & resumes the whole tournament across relaunches.
 
 ## Scoring
 Tap the **multiplier** (Single / Double / Treble), then the **number**; use
