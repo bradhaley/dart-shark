@@ -23,10 +23,6 @@
       '<img class="brand-mark" src="./icons/icon-192.png" alt="">' +
       '<div class="brand">DART SHARK</div><div class="tag">Dart scoreboard · pick a game</div></div>' +
       (resumes ? '<div class="home-actions">' + resumes + '</div>' : '') +
-      '<div class="home-actions">' +
-      '<button class="icon-btn" data-act="history">History</button>' +
-      '<button class="icon-btn" data-act="settings">Settings</button>' +
-      '<button class="icon-btn" data-act="install">Add to iPad</button></div>' +
       '<div class="pad-x"><button class="btn tcta btn-block btn-lg" data-act="tournament">🏆 Run a Tournament</button></div>' +
       '<div class="section-label pad-x">Game modes</div>' +
       '<div class="modegrid">' + cards + '</div></div>';
