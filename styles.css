@@ -344,6 +344,27 @@ button, .key, .mult, .btn, .icon-btn, .modecard, .pcard {
 .rank-stat { font-size: 13px; color: var(--text-dim); text-align: right; }
 .rank-stat b { color: var(--text); font-weight: 750; }
 
+/* recap card */
+.recap-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding-top: 4px; padding-bottom: 6px; }
+.recap-tile { background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r); padding: 12px 14px; }
+.recap-tile-l { font-size: 12px; color: var(--text-faint); }
+.recap-tile-v { font-size: 26px; font-weight: 800; line-height: 1.1; margin-top: 2px; }
+.recap-tile-v.hi { color: var(--accent); }
+.recap-cmp { padding-top: 8px; padding-bottom: 4px; }
+.recap-cmp-head { display: flex; align-items: center; justify-content: space-between; font-size: 15px; font-weight: 750; margin-bottom: 6px; }
+.recap-cmp-head .win { color: var(--accent); }
+.recap-cmp-head .recap-cmp-vs { color: var(--text-faint); font-size: 12px; font-weight: 600; }
+.recap-cmp-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.recap-cmp-row:last-child { border-bottom: 0; }
+.recap-cmp-v { font-size: 15px; font-weight: 700; width: 64px; font-variant-numeric: tabular-nums slashed-zero; }
+.recap-cmp-v:last-child { text-align: right; }
+.recap-cmp-v.win { color: var(--accent); }
+.recap-cmp-l { flex: 1; text-align: center; font-size: 12px; color: var(--text-faint); }
+.recap-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); margin: 10px 6px 6px; }
+.recap-legs { display: flex; gap: 6px; flex-wrap: wrap; padding-bottom: 6px; }
+.recap-leg { font-size: 12px; font-weight: 650; color: var(--text-dim); background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: 8px; padding: 6px 10px; }
+.recap-leg.won { color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--bg-2)); border-color: transparent; }
+
 /* ---------- lists (history/settings) ---------- */
 .list-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px 6px; }
 .list-head h2 { margin: 0; font-size: 22px; font-weight: 750; flex: 1; }

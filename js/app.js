@@ -124,7 +124,7 @@
       ps: [], ms: {}, current: 0, startingPlayer: 0,
       turn: { darts: [], scored: 0, marks: 0 },
       leg: 1, round: 1, roundLimit: 0,
-      legWins: zeros(n), setWins: zeros(n),
+      legWins: zeros(n), setWins: zeros(n), legLog: [],
       stats: players.map(function () { return { darts: 0, points: 0, marks: 0, rounds: 0, high: 0, c180: 0, cTon: 0, bestCheckout: 0 }; }),
       finished: false, winner: null, rank: [], canUndo: false,
       _win: null, _shanghai: false, startedAt: Date.now()
@@ -284,6 +284,8 @@
     m._win = null; m._shanghai = false;
     if (!M.supportsLegs) { finishMatch(i, isShanghai ? 'shanghai' : 'win'); return; }
 
+    if (!m.legLog) m.legLog = [];
+    m.legLog.push(i);                                     // record each leg's winner for the recap
     m.legWins[i]++;
     if (m.legWins[i] >= (m.config.legsToWin || 1)) {
       m.setWins[i]++;
@@ -719,6 +721,7 @@
       case 'addp': addPlayer(); break;
       case 'start': doStart(); break;
       case 'undo': undo(); break;
+      case 'share': if (App.match) UI.shareRecap(App.match); break;
       case 'rematch': if (App.lastSetup) startMatch(App.lastSetup.modeId, App.lastSetup.config, App.lastSetup.names); break;
       case 'export': doExport(); break;
       case 'import': doImport(); break;

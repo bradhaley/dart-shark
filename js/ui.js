@@ -361,31 +361,140 @@
       '<button class="key next" data-act="next">' + (dl === 3 ? 'Skip ▸' : 'Next ▸') + '</button></div></div>';
   }
 
-  // ---------------- GAME OVER ----------------
+  // ---------------- GAME OVER — shareable recap card ----------------
+  function legTally(m) {
+    var c = m.players.map(function () { return 0; });
+    (m.legLog || []).forEach(function (w) { if (c[w] !== undefined) c[w]++; });
+    return c;
+  }
+  function recapSub(m) {
+    var M = Modes[m.modeId], win = m.winner, lc = legTally(m);
+    if (M.supportsLegs && m.config.setsToWin > 1) return M.name + ' · ' + m.setWins[win] + (m.setWins[win] === 1 ? ' set' : ' sets');
+    if (M.supportsLegs && m.config.legsToWin > 1) return M.name + ' · ' + (m.players.length === 2 ? lc[win] + '–' + lc[1 - win] + ' on legs' : 'won ' + lc[win] + ' legs');
+    return M.name + ' · ' + M.goal;
+  }
+  function recapTiles(m, i) {
+    var M = Modes[m.modeId], s = m.stats[i];
+    if (M.id === 'x01') return [
+      { label: '3-dart avg', value: avg3(s) }, { label: '180s', value: s.c180 },
+      { label: 'Best checkout', value: s.bestCheckout || '—' }, { label: 'High score', value: s.high }];
+    if (M.id === 'cricket') return [
+      { label: 'Points', value: m.ps[i].points }, { label: 'MPR', value: s.rounds ? (s.marks / s.rounds).toFixed(2) : '0.00' },
+      { label: 'Marks', value: s.marks }, { label: 'Darts', value: s.darts }];
+    return M.statLines(m, i).slice(0, 4);
+  }
   function over(m) {
-    var M = Modes[m.modeId];
-    var rows = m.rank.map(function (i, pos) {
-      var s = m.stats[i], detail;
-      if (M.id === 'x01') detail = 'avg <b>' + avg3(s) + '</b> · 180s <b>' + s.c180 + '</b>';
-      else if (M.id === 'cricket') detail = 'MPR <b>' + (s.rounds ? (s.marks / s.rounds).toFixed(2) : '0.00') + '</b>';
-      else detail = M.statLines(m, i)[0].label + ' <b>' + M.statLines(m, i)[0].value + '</b>';
-      return '<div class="rank-row' + (pos === 0 ? ' first' : '') + '">' +
-        '<span class="rank-pos">' + (pos === 0 ? '🏆' : '#' + (pos + 1)) + '</span>' +
-        '<span class="rank-name">' + h(m.players[i].name) + '</span>' +
-        '<span class="rank-stat tnum">' + detail + '</span></div>';
+    var M = Modes[m.modeId], win = m.winner;
+    var tiles = recapTiles(m, win).map(function (t, idx) {
+      return '<div class="recap-tile"><div class="recap-tile-l">' + h(t.label) + '</div>' +
+        '<div class="recap-tile-v tnum' + (idx === 2 ? ' hi' : '') + '">' + h(t.value) + '</div></div>';
     }).join('');
-    var champ = m.players[m.winner].name;
-    var sub = M.goal;
-    if (M.supportsLegs && m.config.legsToWin > 1) {
-      var sw = m.setWins[m.winner], lw = m.legWins[m.winner];
-      sub = sw ? ('won ' + sw + (sw === 1 ? ' set' : ' sets')) : ('won ' + lw + (lw === 1 ? ' leg' : ' legs'));
+
+    var mid;
+    if (m.players.length === 2) {
+      var l0 = M.statLines(m, 0), l1 = M.statLines(m, 1), n = Math.min(5, l0.length);
+      var rows = '';
+      for (var k = 0; k < n; k++) {
+        rows += '<div class="recap-cmp-row"><span class="recap-cmp-v' + (win === 0 ? ' win' : '') + '">' + h(l0[k].value) + '</span>' +
+          '<span class="recap-cmp-l">' + h(l0[k].label) + '</span>' +
+          '<span class="recap-cmp-v' + (win === 1 ? ' win' : '') + '">' + h(l1[k] ? l1[k].value : '') + '</span></div>';
+      }
+      mid = '<div class="recap-cmp pad-x"><div class="recap-cmp-head">' +
+        '<span class="' + (win === 0 ? 'win' : '') + '">' + h(m.players[0].name) + '</span>' +
+        '<span class="recap-cmp-vs">vs</span><span class="' + (win === 1 ? 'win' : '') + '">' + h(m.players[1].name) + '</span></div>' + rows + '</div>';
+    } else {
+      mid = '<div class="rank-list">' + m.rank.map(function (i, pos) {
+        var s = m.stats[i], detail;
+        if (M.id === 'x01') detail = 'avg <b>' + avg3(s) + '</b> · 180s <b>' + s.c180 + '</b>';
+        else if (M.id === 'cricket') detail = 'MPR <b>' + (s.rounds ? (s.marks / s.rounds).toFixed(2) : '0.00') + '</b>';
+        else detail = M.statLines(m, i)[0].label + ' <b>' + M.statLines(m, i)[0].value + '</b>';
+        return '<div class="rank-row' + (pos === 0 ? ' first' : '') + '"><span class="rank-pos">' + (pos === 0 ? '🏆' : '#' + (pos + 1)) +
+          '</span><span class="rank-name">' + h(m.players[i].name) + '</span><span class="rank-stat tnum">' + detail + '</span></div>';
+      }).join('') + '</div>';
     }
+
+    var legs = '';
+    if (m.legLog && m.legLog.length > 1) {
+      legs = '<div class="recap-label pad-x">Legs</div><div class="recap-legs pad-x">' +
+        m.legLog.map(function (w) { return '<span class="recap-leg' + (w === win ? ' won' : '') + '">' + h(m.players[w].name) + '</span>'; }).join('') + '</div>';
+    }
+
     return '<div class="screen over scroll">' +
-      '<div class="over-head"><div class="trophy">🏆</div><h1>' + h(champ) + ' wins!</h1>' +
-      '<div class="winsub">' + h(M.name) + ' · ' + h(sub) + '</div></div>' +
-      '<div class="rank-list">' + rows + '</div>' +
-      '<div class="bottombar"><button class="btn btn-ghost" data-act="home">Home</button>' +
-      '<button class="btn btn-accent btn-block btn-lg" data-act="rematch">Rematch ▸</button></div></div>';
+      '<div class="over-head"><div class="trophy">🏆</div><h1>' + h(m.players[win].name) + ' wins!</h1>' +
+      '<div class="winsub">' + h(recapSub(m)) + '</div></div>' +
+      '<div class="recap-tiles pad-x">' + tiles + '</div>' + mid + legs +
+      '<div class="bottombar">' +
+      '<button class="btn btn-ghost" data-act="home">Home</button>' +
+      '<button class="btn btn-ghost" data-act="share">⤴ Share</button>' +
+      '<button class="btn btn-accent" data-act="rematch" style="flex:1">Rematch ▸</button></div></div>';
+  }
+
+  // render the recap to a PNG and share it (Web Share on iPad) or download it
+  function rrect(c, x, y, w, hh, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + hh, r); c.arcTo(x + w, y + hh, x, y + hh, r); c.arcTo(x, y + hh, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+  function buildRecapCanvas(m) {
+    var M = Modes[m.modeId], win = m.winner, S = 2, W = 540, H = 624, FONT = '"SF Pro Rounded", ui-rounded, system-ui, sans-serif';
+    var cv = document.createElement('canvas'); cv.width = W * S; cv.height = H * S;
+    var c = cv.getContext('2d'); c.scale(S, S);
+    c.fillStyle = '#15171d'; c.fillRect(0, 0, W, H);
+    c.textAlign = 'center';
+    c.font = '40px ' + FONT; c.fillText('🏆', W / 2, 64);
+    c.font = '800 34px ' + FONT; c.fillStyle = '#e9b84a'; c.fillText(m.players[win].name + ' wins', W / 2, 108);
+    c.font = '500 16px ' + FONT; c.fillStyle = '#9aa0aa'; c.fillText(recapSub(m), W / 2, 134);
+    var tiles = recapTiles(m, win).slice(0, 4), tx = 30, ty = 158, tw = (W - 60 - 14) / 2, th = 76;
+    tiles.forEach(function (t, idx) {
+      var X = tx + (idx % 2) * (tw + 14), Y = ty + Math.floor(idx / 2) * (th + 14);
+      c.fillStyle = '#1d2027'; rrect(c, X, Y, tw, th, 12); c.fill();
+      c.textAlign = 'left'; c.font = '500 13px ' + FONT; c.fillStyle = '#9aa0aa'; c.fillText(String(t.label), X + 16, Y + 28);
+      c.font = '800 29px ' + FONT; c.fillStyle = idx === 2 ? '#e9b84a' : '#eef0f4'; c.fillText(String(t.value), X + 16, Y + 60);
+    });
+    var y = ty + 2 * th + 14 + 18;
+    var px = 30, pw = W - 60;
+    if (m.players.length === 2) {
+      var l0 = M.statLines(m, 0), l1 = M.statLines(m, 1), n = Math.min(5, l0.length), ph = 40 + n * 30;
+      c.fillStyle = '#1d2027'; rrect(c, px, y, pw, ph, 12); c.fill();
+      c.font = '700 16px ' + FONT;
+      c.textAlign = 'left'; c.fillStyle = win === 0 ? '#e9b84a' : '#eef0f4'; c.fillText(m.players[0].name, px + 16, y + 26);
+      c.textAlign = 'right'; c.fillStyle = win === 1 ? '#e9b84a' : '#eef0f4'; c.fillText(m.players[1].name, px + pw - 16, y + 26);
+      c.textAlign = 'center'; c.fillStyle = '#6b7079'; c.font = '500 12px ' + FONT; c.fillText('vs', W / 2, y + 26);
+      for (var k = 0; k < n; k++) {
+        var ry = y + 40 + k * 30 + 18;
+        c.textAlign = 'left'; c.font = '700 16px ' + FONT; c.fillStyle = win === 0 ? '#e9b84a' : '#eef0f4'; c.fillText(String(l0[k].value), px + 16, ry);
+        c.textAlign = 'center'; c.font = '500 12px ' + FONT; c.fillStyle = '#9aa0aa'; c.fillText(String(l0[k].label), W / 2, ry);
+        c.textAlign = 'right'; c.font = '700 16px ' + FONT; c.fillStyle = win === 1 ? '#e9b84a' : '#eef0f4'; c.fillText(String(l1[k] ? l1[k].value : ''), px + pw - 16, ry);
+      }
+    } else {
+      var rk = m.rank.slice(0, 4);
+      rk.forEach(function (i, pos) {
+        var ry = y + pos * 44;
+        c.fillStyle = '#1d2027'; rrect(c, px, ry, pw, 36, 10); c.fill();
+        c.textAlign = 'left'; c.font = '700 15px ' + FONT; c.fillStyle = pos === 0 ? '#e9b84a' : '#eef0f4';
+        c.fillText((pos === 0 ? '1  ' : (pos + 1) + '  ') + m.players[i].name, px + 14, ry + 23);
+        c.textAlign = 'right'; c.font = '600 14px ' + FONT; c.fillStyle = '#9aa0aa';
+        c.fillText(M.id === 'x01' ? (avg3(m.stats[i]) + ' avg') : String(M.statLines(m, i)[0].value), px + pw - 14, ry + 23);
+      });
+    }
+    c.textAlign = 'center'; c.font = '700 14px ' + FONT; c.fillStyle = '#6b7079'; c.fillText('DART SHARK', W / 2, H - 22);
+    return cv;
+  }
+  function shareRecap(m) {
+    var cv;
+    try { cv = buildRecapCanvas(m); } catch (e) { toast('Screenshot this card to share'); return; }
+    cv.toBlob(function (blob) {
+      if (!blob) { toast('Screenshot this card to share'); return; }
+      var file = null;
+      try { file = new File([blob], 'dart-shark-recap.png', { type: 'image/png' }); } catch (e) {}
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: 'Dart Shark', text: m.players[m.winner].name + ' wins on Dart Shark 🦈🎯' }).catch(function () {});
+        return;
+      }
+      try {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a'); a.href = url; a.download = 'dart-shark-recap.png';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        toast('Recap image saved');
+      } catch (e2) { toast('Screenshot this card to share'); }
+    }, 'image/png');
   }
 
   // ---------------- HISTORY ----------------
@@ -475,5 +584,5 @@
   function avg3(s) { return s.darts ? ((s.points / s.darts) * 3).toFixed(1) : '0.0'; }
   function label(l) { return l.replace('3-dart avg', 'avg').replace('Checkout', 'co'); }
 
-  root.UI = { home: home, setup: setup, game: game, over: over, history: history, settings: settings, tournamentSetup: tournamentSetup, tournament: tournament, celebrate: celebrate, toast: toast, turnTotal: turnTotal };
+  root.UI = { home: home, setup: setup, game: game, over: over, history: history, settings: settings, tournamentSetup: tournamentSetup, tournament: tournament, celebrate: celebrate, toast: toast, turnTotal: turnTotal, shareRecap: shareRecap };
 })(typeof window !== 'undefined' ? window : this);
