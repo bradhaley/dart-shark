@@ -15,13 +15,15 @@
   var sprites = {};
   var visit = null;                              // the active visit animation
 
-  // ---- timing (ms) ----
-  var FLY_GAP = 320, FLY_DUR = 520, ORBIT_DELAY = 150, ORBIT_DUR = 1050, FADE = 320;
+  // ---- timing (ms) — slow, cinematic ----
+  var FLY_GAP = 520, FLY_DUR = 880, ORBIT_DELAY = 360, ORBIT_DUR = 2300, FADE = 560;
   // ---- camera / scene ----
-  var CAM_Z = 4.3, PHI = 0.18, APEX = 0.52, NSAMP = 46;
+  var CAM_Z = 4.3, PHI = 0.20, APEX = 0.55, NSAMP = 46;
   var TWO_PI = Math.PI * 2;
 
   var GOLD = [224, 182, 110], GREEN = [74, 208, 138], ICE = [150, 200, 255];
+  // real dartboard palette
+  var B_BLACK = [24, 26, 30], B_CREAM = [226, 216, 194], B_RED = [200, 54, 46], B_GREEN = [40, 150, 84], B_RIM = [11, 13, 18], B_WIRE = [150, 154, 162];
   function tier(d) {
     var p = E ? E.points(d) : d.mult * d.value;
     if (d.mult === 3 || (d.value === 25 && d.mult === 2) || p >= 50) return { c: GOLD, premium: true };
@@ -185,37 +187,47 @@
 
     var theta = 0;
     if (el > orbitStart && el < orbitEnd) theta = easeInOut((el - orbitStart) / ORBIT_DUR) * TWO_PI;
-    var alpha = el < orbitEnd ? 1 : Math.max(0, 1 - (el - orbitEnd) / FADE);
+    var aIn = Math.min(1, el / 220);
+    var alpha = (el < orbitEnd ? 1 : Math.max(0, 1 - (el - orbitEnd) / FADE)) * aIn;
     var c = cam(theta);
 
+    ctx.save(); ctx.fillStyle = 'rgba(6,9,16,' + (0.5 * alpha).toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); ctx.restore();
     drawBoard(c, alpha);
     for (var i = 0; i < n; i++) drawShot(shots[i], i, el, c, alpha);
   }
 
+  // a real dartboard: 20 alternating beds, red/green double & triple rings, bull, wire — drawn in the same 3D camera
   function drawBoard(c, alpha) {
-    function ring(rf, steps) { var a = []; for (var i = 0; i <= steps; i++) { var ang = i / steps * TWO_PI; a.push(project({ x: rf * Math.cos(ang), y: rf * Math.sin(ang), z: 0 }, c)); } return a; }
-    function poly(pts) { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); }
-    var outer = ring(1.0, 40);
-    ctx.save();
-    // board face (dark disc) so the orbit reads as a solid board
-    poly(outer); ctx.closePath(); ctx.fillStyle = 'rgba(10,12,16,' + (0.55 * alpha) + ')'; ctx.fill();
-    ctx.lineJoin = 'round';
-    // rings
-    ctx.strokeStyle = 'rgba(255,255,255,' + (0.12 * alpha) + ')'; ctx.lineWidth = 1.2;
-    poly(outer); ctx.closePath(); ctx.stroke();
-    var triple = ring(0.55, 40), dbl = ring(0.90, 40), bull = ring(0.09, 24);
-    poly(triple); ctx.closePath(); ctx.stroke();
-    poly(bull); ctx.closePath(); ctx.stroke();
-    ctx.strokeStyle = rgba(GOLD, 0.20 * alpha); ctx.lineWidth = 1.4;
-    poly(dbl); ctx.closePath(); ctx.stroke();
-    // spokes
-    ctx.strokeStyle = 'rgba(255,255,255,' + (0.07 * alpha) + ')'; ctx.lineWidth = 1;
-    for (var k = 0; k < 20; k++) {
-      var ang = (k * 18 + 9) * Math.PI / 180;
-      var a = project({ x: 0.09 * Math.cos(ang), y: 0.09 * Math.sin(ang), z: 0 }, c);
-      var b = project({ x: Math.cos(ang), y: Math.sin(ang), z: 0 }, c);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    var D2R = Math.PI / 180;
+    function bp(rf, th) { return project({ x: rf * Math.sin(th), y: rf * Math.cos(th), z: 0 }, c); }    // 20 at top
+    function ringPts(rf, steps) { var a = []; for (var i = 0; i <= steps; i++) a.push(bp(rf, i / steps * TWO_PI)); return a; }
+    function trace(pts) { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.closePath(); }
+    function fillRing(rf, steps, col, a) { trace(ringPts(rf, steps)); ctx.fillStyle = rgba(col, a); ctx.fill(); }
+    function sector(r0, r1, tA, tB, col, a) {
+      var st = 3, pts = [], i;
+      for (i = 0; i <= st; i++) pts.push(bp(r1, tA + (tB - tA) * i / st));
+      for (i = st; i >= 0; i--) pts.push(bp(r0, tA + (tB - tA) * i / st));
+      trace(pts); ctx.fillStyle = rgba(col, a); ctx.fill();
     }
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    fillRing(1.02, 44, B_RIM, 0.97 * alpha);                                   // dark surround / backing
+    for (var si = 0; si < 20; si++) {                                          // 20 beds
+      var even = (si % 2 === 0);
+      var single = even ? B_BLACK : B_CREAM, ringc = even ? B_RED : B_GREEN;
+      var tc = si * 18 * D2R, tA = tc - 9 * D2R, tB = tc + 9 * D2R;
+      sector(0.095, 0.52, tA, tB, single, alpha);                             // inner single
+      sector(0.52, 0.58, tA, tB, ringc, alpha);                              // triple
+      sector(0.58, 0.86, tA, tB, single, alpha);                            // outer single
+      sector(0.86, 0.92, tA, tB, ringc, alpha);                             // double
+    }
+    fillRing(0.095, 22, B_GREEN, alpha);                                      // 25 ring
+    fillRing(0.05, 18, B_RED, alpha);                                         // bull
+    ctx.strokeStyle = rgba(B_WIRE, 0.45 * alpha); ctx.lineWidth = 1;          // spider wire
+    [0.05, 0.095, 0.52, 0.58, 0.86, 0.92].forEach(function (rf) { trace(ringPts(rf, 44)); ctx.stroke(); });
+    for (var k = 0; k < 20; k++) { var ang = (k * 18 + 9) * D2R, a = bp(0.095, ang), b = bp(0.92, ang); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+    ctx.strokeStyle = rgba(GOLD, 0.55 * alpha); ctx.lineWidth = 2; trace(ringPts(0.97, 46)); ctx.stroke();   // gold rim
     ctx.restore();
   }
 
