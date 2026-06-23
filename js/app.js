@@ -186,31 +186,20 @@
       darts: m.turn.darts.slice()
     };
 
-    if (App.settings.tracer && root.Tracer && root.Tracer.shoot && ctx.darts.some(isScoringDart)) {
+    if (App.settings.tracer && root.Tracer && root.Tracer.playVisit && ctx.darts.some(isScoringDart)) {
       App.animating = true;
-      render();                       // show all three darts in the strip; input is locked while the replay runs
-      playReplay(ctx);                // fire the tracers one by one, then pop the visit total, then advance
+      App._anim = { ctx: ctx, phase: 'fly', timers: [], done: false };
+      render();                       // show all three darts in the strip; input is locked while it plays
+      root.Tracer.playVisit(ctx.darts, function () {   // 3D arcs → 360° orbit → done
+        if (!App._anim || App._anim.done) return;
+        showTotalThenAdvance(ctx);     // then pop the total and advance
+      });
     } else {
       finishVisitImmediate(ctx);      // tracer off / nothing to trace — original instant behavior
     }
   }
 
   function isScoringDart(d) { return !!d && d.mult !== 0; }
-
-  // tracer ON: send each dart one at a time, then the total popup, then advance
-  function playReplay(ctx) {
-    var scoring = ctx.darts.filter(isScoringDart), idx = 0;
-    App._anim = { ctx: ctx, timers: [], phase: 'replay', done: false };
-    (function step() {
-      if (!App._anim || App._anim.done) return;
-      if (idx < scoring.length) {
-        root.Tracer.shoot(scoring[idx]); idx++;
-        App._anim.timers.push(setTimeout(step, REPLAY_GAP));
-      } else {
-        App._anim.timers.push(setTimeout(function () { showTotalThenAdvance(ctx); }, REPLAY_LAND));
-      }
-    })();
-  }
 
   function showTotalThenAdvance(ctx) {
     if (!App._anim || App._anim.done) return;
@@ -234,17 +223,20 @@
     else if (App.settings.voice && (ctx.M.id === 'x01' || ctx.M.id === 'countup') && ctx.vp > 0) Sound.callScore(ctx.vp);
   }
 
-  function endReplay() { App.animating = false; if (App._anim) { App._anim.done = true; App._anim.timers.forEach(clearTimeout); } App._anim = null; }
+  function endReplay() { App.animating = false; if (root.Tracer && root.Tracer.clear) root.Tracer.clear(); if (App._anim) { App._anim.done = true; App._anim.timers.forEach(clearTimeout); } App._anim = null; }
 
   // a tap during the replay fast-forwards it
   function skipReplay() {
     if (!App._anim || App._anim.done) return;
-    var ctx = App._anim.ctx, phase = App._anim.phase;
-    App._anim.timers.forEach(clearTimeout); App._anim.timers = [];
+    var phase = App._anim.phase, ctx = App._anim.ctx;
     App._skipAt = nowMs();
-    if (root.Tracer && root.Tracer.clear) root.Tracer.clear();
-    if (phase === 'replay') showTotalThenAdvance(ctx);
-    else { endReplay(); rotate(); persist(); render(); }
+    if (phase === 'fly') {
+      if (root.Tracer && root.Tracer.skip) root.Tracer.skip();   // ends the flight/orbit; its onDone shows the total
+      else showTotalThenAdvance(ctx);
+    } else {
+      App._anim.timers.forEach(clearTimeout); App._anim.timers = [];
+      endReplay(); rotate(); persist(); render();
+    }
   }
   function nowMs() { return root.performance && performance.now ? performance.now() : Date.now(); }
 

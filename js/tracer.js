@@ -1,10 +1,9 @@
-/* Dart Shark shot tracer — broadcast-style neon comet that flies to the exact
-   segment hit, drives into the board and embeds (spark burst + ring + stuck pip).
-   Pure Canvas 2D, additive 'lighter' glow (no shadowBlur/filter on iOS), cached
-   head sprites, sub-step motion blur, preallocated particle pool. Toggleable.
-
-   Technique basis: layered additive strokes for bloom, history-buffer redraw on a
-   transparent overlay, easeOutQuint flight, DPR capped at 2, loop stops when idle. */
+/* Dart Shark shot tracer — "broadcast 360".
+   Each dart of a visit flies a real 3D parabola to its segment as a glowing
+   Toptracer-style comet; once all darts have landed the camera orbits a full
+   360° around the board (bullet-time), then settles to the front and fades.
+   Pure Canvas 2D: additive 'lighter' glow, cached head sprites, a tiny 3D
+   projection (rotate-about-Y + tilt + perspective), preallocated particle pool. */
 (function (root) {
   'use strict';
   var E = root.Engine;
@@ -12,13 +11,17 @@
 
   var enabled = true;
   var canvas, ctx, dpr = 1, W = 0, H = 0;
-  var boardImg, boardReady = false, boardFade = 0;
-  var shots = [];
   var raf = 0, lastNow = 0;
-  var sprites = {};            // cached radial head sprites by color key
+  var sprites = {};
+  var visit = null;                              // the active visit animation
 
-  // ---- tier color + premium flag --------------------------------------------
-  var GOLD = [245, 196, 81], GREEN = [74, 208, 138], ICE = [128, 202, 255];
+  // ---- timing (ms) ----
+  var FLY_GAP = 320, FLY_DUR = 520, ORBIT_DELAY = 150, ORBIT_DUR = 1050, FADE = 320;
+  // ---- camera / scene ----
+  var CAM_Z = 4.3, PHI = 0.18, APEX = 0.52, NSAMP = 46;
+  var TWO_PI = Math.PI * 2;
+
+  var GOLD = [224, 182, 110], GREEN = [74, 208, 138], ICE = [150, 200, 255];
   function tier(d) {
     var p = E ? E.points(d) : d.mult * d.value;
     if (d.mult === 3 || (d.value === 25 && d.mult === 2) || p >= 50) return { c: GOLD, premium: true };
@@ -26,29 +29,12 @@
     return { c: ICE, premium: false };
   }
   function rgba(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+  function rnd(s) { var x = Math.sin(s * 991.317) * 43758.545; return x - Math.floor(x); }
+  function easeOutQuint(t) { return 1 - Math.pow(1 - t, 5); }
+  function easeInOut(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+  function now() { return root.performance && performance.now ? performance.now() : Date.now(); }
 
-  // ---- board geometry (same invisible board the dart "lands" on) -------------
-  function boardGeom() { var R = Math.min(W, H) * 0.28; return { cx: W / 2, cy: H * 0.40, R: R }; }
-  function ringRadius(d) {
-    if (d.value === 25) return d.mult === 2 ? 0.028 : 0.085;
-    if (d.mult === 3) return 0.622;
-    if (d.mult === 2) return 0.912;
-    return 0.74;
-  }
-  function jitter(seed, span) { var x = Math.sin(seed * 999.13) * 43758.5453; x -= Math.floor(x); return (x - 0.5) * span; }
-  function landingPoint(d, g, seed) {
-    if (d.mult === 0) return null;
-    var r = ringRadius(d) * g.R, theta;
-    if (d.value === 25) { theta = jitter(seed, Math.PI * 2); r *= (0.4 + Math.abs(jitter(seed + 7, 1))); }
-    else {
-      var idx = ORDER.indexOf(d.value);
-      theta = idx * 18 * Math.PI / 180 + jitter(seed, 0.18);
-      r += jitter(seed + 3, 0.04) * g.R;
-    }
-    return { x: g.cx + r * Math.sin(theta), y: g.cy - r * Math.cos(theta) };
-  }
-
-  // ---- canvas setup ----------------------------------------------------------
+  // ---- canvas ----
   function ensure() {
     if (canvas) return;
     canvas = document.createElement('canvas');
@@ -57,22 +43,20 @@
     canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40';
     document.body.appendChild(canvas);
     ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    if (!ctx) { canvas = null; return; }       // no 2D context — disable gracefully
     resize();
     root.addEventListener('resize', resize);
-    boardImg = new Image();
-    boardImg.onload = function () { boardReady = true; };
-    boardImg.src = './icons/board-fill.png';
   }
   function resize() {
-    if (!canvas) return;
-    dpr = Math.min(root.devicePixelRatio || 1, 2);  // cap at 2 — biggest iPad win
+    if (!canvas || !ctx) return;
+    dpr = Math.min(root.devicePixelRatio || 1, 2);
     W = root.innerWidth; H = root.innerHeight;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    sprites = {};                                   // rebuild sprites at new dpr
+    sprites = {};
   }
+  function clearCanvas() { if (ctx) ctx.clearRect(0, 0, W, H); }
 
-  // cached white-hot -> accent -> transparent radial sprite, drawn additively
   function sprite(c) {
     var key = c[0] + '_' + c[1] + '_' + c[2];
     if (sprites[key]) return sprites[key];
@@ -88,212 +72,205 @@
     return sprites[key];
   }
 
-  // ---- particle pool ---------------------------------------------------------
+  // ---- particle pool ----
   var MAXP = 90, P = new Array(MAXP);
   for (var k = 0; k < MAXP; k++) P[k] = { x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, c: ICE };
   function burst(x, y, n, c, power) {
     for (var k = 0; k < MAXP && n > 0; k++) {
       var p = P[k]; if (p.life > 0) continue;
-      var ang = Math.random() * 6.2832, spd = (50 + Math.random() * 200) * power;
+      var ang = Math.random() * TWO_PI, spd = (50 + Math.random() * 190) * power;
       p.x = x; p.y = y; p.vx = Math.cos(ang) * spd; p.vy = Math.sin(ang) * spd - 30 * power;
-      p.max = p.life = 0.35 + Math.random() * 0.45; p.c = c; n--;
+      p.max = p.life = 0.34 + Math.random() * 0.44; p.c = c; n--;
     }
   }
-
-  // ---- shoot -----------------------------------------------------------------
-  function easeOutQuint(t) { return 1 - Math.pow(1 - t, 5); }
-  function shoot(d) {
-    if (!enabled || !d || d.mult === 0) return;
-    ensure();
-    var g = boardGeom();
-    var seed = (shots.length + 1) * 13.37 + d.value + d.mult * 7;
-    var land = landingPoint(d, g, seed * 0.013 + d.value + d.mult);
-    if (!land) return;
-    var t = tier(d);
-    var launch = { x: g.cx + jitter(seed, 1) * W * 0.16, y: H * 1.04 };
-    // flat-ish fast dart arc: modest lift, control biased toward the board
-    var dist = Math.hypot(land.x - launch.x, land.y - launch.y);
-    var ctrl = { x: launch.x + (land.x - launch.x) * 0.62, y: Math.min(land.y, launch.y) - dist * 0.18 - 40 };
-    // pre-sample the path once (no per-frame allocation)
-    var N = 56, pts = new Array(N + 1);
-    for (var i = 0; i <= N; i++) {
-      var u = i / N, v = 1 - u, a = v * v, b = 2 * v * u, e = u * u;
-      pts[i] = { x: a * launch.x + b * ctrl.x + e * land.x, y: a * launch.y + b * ctrl.y + e * land.y };
+  var GRAV = 540;
+  function updateParticles(dt) {
+    var any = false;
+    for (var i = 0; i < MAXP; i++) {
+      var p = P[i]; if (p.life <= 0) continue;
+      p.life -= dt; if (p.life <= 0) continue; any = true;
+      p.vy += GRAV * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+      var a = p.life / p.max, r = 0.8 + 2.4 * a;
+      ctx.globalAlpha = a; ctx.fillStyle = a > 0.55 ? 'rgba(255,255,255,1)' : rgba(p.c, 1);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TWO_PI); ctx.fill();
     }
-    shots.push({
-      t0: now(), flight: 400, ringDur: 360, pipDur: 520, total: 1000,
-      pts: pts, N: N, land: land, c: t.c, premium: t.premium,
-      label: E ? E.dartLabel(d) : '', pts_v: E ? E.points(d) : 0,
-      prevHead: 0, impacted: false, impactT: 0, sp: sprite(t.c)
-    });
-    boardFade = 1;
+    return any;
+  }
+  function anyParticles() { for (var i = 0; i < MAXP; i++) if (P[i].life > 0) return true; return false; }
+
+  // ---- 3D scene ----
+  function scene() { var m = Math.min(W, H); return { cx: W / 2, cy: H * 0.42, focal: 0.30 * m * CAM_Z }; }
+  function ringFrac(d) {
+    if (d.value === 25) return d.mult === 2 ? 0.05 : 0.10;
+    if (d.mult === 3) return 0.55;
+    if (d.mult === 2) return 0.90;
+    return 0.72;
+  }
+  function targetXY(d, seed) {
+    var rf = ringFrac(d), theta;
+    if (d.value === 25) { theta = rnd(seed) * TWO_PI; rf *= 0.3 + Math.abs(rnd(seed + 1)) * 0.6; }
+    else { var i = ORDER.indexOf(d.value); theta = i * 18 * Math.PI / 180 + (rnd(seed) - 0.5) * 0.16; rf += (rnd(seed + 2) - 0.5) * 0.05; }
+    return { x: rf * Math.sin(theta), y: rf * Math.cos(theta) };   // board plane: +Y up, 20 at top
+  }
+  function buildShot(d, idx) {
+    var seed = (idx + 1) * 13.37 + d.value + d.mult * 7;
+    var tgt = targetXY(d, seed);
+    var lx = (rnd(seed + 5) - 0.5) * 0.5, ly = -1.4, lz = 2.7;
+    var pts = new Array(NSAMP + 1);
+    for (var k = 0; k <= NSAMP; k++) {
+      var t = k / NSAMP;
+      pts[k] = {
+        x: lx + (tgt.x - lx) * t,
+        y: ly + (tgt.y - ly) * t + APEX * 4 * t * (1 - t),
+        z: lz * (1 - t)
+      };
+    }
+    var tr = tier(d);
+    return { pts: pts, c: tr.c, premium: tr.premium, sp: sprite(tr.c), N: NSAMP };
+  }
+
+  function cam(theta) {
+    var s = scene();
+    return { cx: s.cx, cy: s.cy, focal: s.focal, cosT: Math.cos(theta), sinT: Math.sin(theta), cosP: Math.cos(PHI), sinP: Math.sin(PHI) };
+  }
+  function project(p, c) {
+    var xr = p.x * c.cosT + p.z * c.sinT;
+    var zr = -p.x * c.sinT + p.z * c.cosT;
+    var yt = p.y * c.cosP - zr * c.sinP;
+    var zt = p.y * c.sinP + zr * c.cosP;
+    var depth = CAM_Z - zt; if (depth < 0.06) depth = 0.06;
+    var s = c.focal / depth;
+    return { x: c.cx + xr * s, y: c.cy - yt * s, s: s };
+  }
+
+  // ---- play a whole visit ----
+  function playVisit(darts, onDone) {
+    ensure();
+    var scoring = (darts || []).filter(function (d) { return d && d.mult !== 0; });
+    if (!enabled || !scoring.length || !ctx) { if (onDone) onDone(); return; }
+    visit = { shots: scoring.map(function (d, i) { return buildShot(d, i); }), onDone: onDone, t0: now(), done: false, bursts: {} };
     if (!raf) { lastNow = now(); raf = requestAnimationFrame(frame); }
   }
+  function shoot(d) { playVisit([d]); }                 // single-dart preview (kept for compatibility)
+  function finishVisit() {
+    if (!visit || visit.done) return;
+    visit.done = true; var cb = visit.onDone; visit = null; clearCanvas();
+    if (cb) cb();
+  }
+  function skip() { if (visit && !visit.done) finishVisit(); }
+  function clear() {
+    visit = null;
+    for (var i = 0; i < MAXP; i++) P[i].life = 0;
+    if (raf && root.cancelAnimationFrame) { root.cancelAnimationFrame(raf); raf = 0; }
+    clearCanvas();
+  }
 
-  function now() { return root.performance ? performance.now() : Date.now(); }
-
-  // ---- per-frame -------------------------------------------------------------
+  // ---- frame ----
   function frame() {
     raf = 0;
     var t = now(), dt = Math.min((t - lastNow) / 1000, 0.033); lastNow = t;
     ctx.clearRect(0, 0, W, H);
-
-    // faint board backdrop while anything is active
-    var target = shots.length ? 1 : 0;
-    boardFade += (target - boardFade) * 0.12;
-    if (boardReady && boardFade > 0.02) {
-      var g = boardGeom(), bs = g.R * 2.05;
-      ctx.save(); ctx.globalAlpha = 0.1 * boardFade;
-      ctx.drawImage(boardImg, g.cx - bs / 2, g.cy - bs / 2, bs, bs);
-      ctx.restore();
-    }
-
-    for (var i = shots.length - 1; i >= 0; i--) {
-      var sh = shots[i], age = t - sh.t0;
-      drawShot(sh, age, t);
-      if (age > sh.total) shots.splice(i, 1);
-    }
-    updateParticles(dt);
-
-    var anyP = false; for (var k = 0; k < MAXP; k++) if (P[k].life > 0) { anyP = true; break; }
-    if (shots.length || anyP || boardFade > 0.02) raf = requestAnimationFrame(frame);
-    else ctx.clearRect(0, 0, W, H);   // clean exit + stop the loop
+    if (visit) drawVisit(t);
+    var pAlive = false;
+    if (anyParticles()) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; pAlive = updateParticles(dt); ctx.restore(); }
+    if (visit || pAlive) raf = requestAnimationFrame(frame);
+    else clearCanvas();
   }
 
-  function drawShot(sh, age, t) {
-    var fp = Math.min(age / sh.flight, 1), pe = easeOutQuint(fp);
-    // tiny overshoot/settle at the embed point
-    var over = fp >= 1 ? 0 : 0;
-    var headF = pe * sh.N;
-    var fade = 1;
+  function drawVisit(t) {
+    var el = t - visit.t0, shots = visit.shots, n = shots.length;
+    var flightEnd = (n - 1) * FLY_GAP + FLY_DUR;
+    var orbitStart = flightEnd + ORBIT_DELAY, orbitEnd = orbitStart + ORBIT_DUR, fadeEnd = orbitEnd + FADE;
+    if (el >= fadeEnd) { finishVisit(); return; }
 
-    // ---- comet trail (history-buffer redraw, additive layered strokes) ----
-    var TRAIL = 26, i1 = Math.min(Math.floor(headF), sh.N), i0;
-    if (age <= sh.flight) i0 = i1 - TRAIL;
-    else { var dd = Math.min((age - sh.flight) / 200, 1); i0 = i1 - Math.round(TRAIL * (1 - dd)); fade = 1 - dd; }
-    if (i0 < 1) i0 = 1;
-    if (i1 > i0) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      var pts = sh.pts;
-      for (var i = i0; i <= i1; i++) {
-        var s = (i - i0) / (i1 - i0), ez = s * s;
-        var w = 0.6 + 12.0 * ez, a = (0.05 + 0.92 * ez) * fade;
-        var x0 = pts[i - 1].x, y0 = pts[i - 1].y, x1 = pts[i].x, y1 = pts[i].y;
-        // wide soft outer bloom
-        ctx.globalAlpha = a * 0.16; ctx.strokeStyle = rgba(sh.c, 1); ctx.lineWidth = w * 4.2;
-        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-        // mid colored body
-        ctx.globalAlpha = a * 0.42; ctx.strokeStyle = rgba(sh.c, 1); ctx.lineWidth = w * 2.4;
-        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-        // hot near-white core
-        ctx.globalAlpha = a; ctx.strokeStyle = 'rgba(255,255,255,0.95)'; ctx.lineWidth = Math.max(1.2, w * 0.62);
-        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-      }
-      ctx.restore();
-    }
+    var theta = 0;
+    if (el > orbitStart && el < orbitEnd) theta = easeInOut((el - orbitStart) / ORBIT_DUR) * TWO_PI;
+    var alpha = el < orbitEnd ? 1 : Math.max(0, 1 - (el - orbitEnd) / FADE);
+    var c = cam(theta);
 
-    // ---- glowing head with sub-step motion blur (anti-strobe) ----
-    if (age < sh.flight + 60 && headF >= 1) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      var sp = sh.sp, sub = 3;
-      for (var ss = 1; ss <= sub; ss++) {
-        var hf = sh.prevHead + (headF - sh.prevHead) * (ss / sub);
-        var idx = Math.max(0, Math.min(sh.N, Math.floor(hf)));
-        var hp = sh.pts[idx];
-        var scale = 0.62 + 0.2 * ss, rad = sp.r * scale;
-        ctx.globalAlpha = 0.4 * (ss / sub) + (ss === sub ? 0.55 : 0);
-        ctx.drawImage(sp.canvas, hp.x - rad, hp.y - rad, rad * 2, rad * 2);
-      }
-      ctx.restore();
-    }
-    sh.prevHead = headF;
-
-    // ---- impact: spark burst + ring + stuck pip + label ----
-    if (!sh.impacted && age >= sh.flight) {
-      sh.impacted = true; sh.impactT = t;
-      burst(sh.land.x, sh.land.y, sh.premium ? 22 : 10, sh.c, sh.premium ? 1.3 : 0.9);
-    }
-    if (sh.impacted) {
-      var ip = t - sh.impactT;
-      // expanding ring
-      var rp = Math.min(ip / sh.ringDur, 1);
-      if (rp < 1) {
-        ctx.save(); ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = (1 - rp) * 0.75; ctx.strokeStyle = rgba(sh.c, 1);
-        ctx.lineWidth = 3.0 * (1 - rp) + 0.7;
-        ctx.beginPath(); ctx.arc(sh.land.x, sh.land.y, 6 + rp * 48, 0, 6.2832); ctx.stroke();
-        if (sh.premium) { // a second, faster inner ring for big hits
-          ctx.globalAlpha = (1 - rp) * 0.5;
-          ctx.beginPath(); ctx.arc(sh.land.x, sh.land.y, 3 + rp * 22, 0, 6.2832); ctx.stroke();
-        }
-        ctx.restore();
-      }
-      // premium edge flash
-      if (sh.premium && ip < 260) {
-        var ef = 1 - ip / 260;
-        ctx.save(); ctx.globalCompositeOperation = 'lighter';
-        var fg = ctx.createRadialGradient(W / 2, H * 0.4, Math.min(W, H) * 0.2, W / 2, H * 0.4, Math.max(W, H) * 0.7);
-        fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, rgba(sh.c, 0.16 * ef));
-        ctx.fillStyle = fg; ctx.fillRect(0, 0, W, H); ctx.restore();
-      }
-      // stuck pip + contact shadow (holds, then fades)
-      var pf = ip < sh.pipDur ? 1 : Math.max(0, 1 - (ip - sh.pipDur) / 200);
-      if (pf > 0) {
-        ctx.save();
-        ctx.globalAlpha = pf * 0.5; ctx.fillStyle = 'rgba(0,0,0,1)';
-        ctx.beginPath(); ctx.arc(sh.land.x + 1.5, sh.land.y + 1.5, 3.4, 0, 6.2832); ctx.fill();
-        ctx.globalAlpha = pf; ctx.fillStyle = 'rgba(255,255,255,0.95)';
-        ctx.beginPath(); ctx.arc(sh.land.x, sh.land.y, 3.2, 0, 6.2832); ctx.fill();
-        ctx.globalAlpha = pf; ctx.fillStyle = rgba(sh.c, 1);
-        ctx.beginPath(); ctx.arc(sh.land.x, sh.land.y, 1.6, 0, 6.2832); ctx.fill();
-        ctx.restore();
-      }
-      // floating label (rise + fade)
-      var lf = ip < 120 ? ip / 120 : Math.max(0, 1 - (ip - 120) / 700);
-      if (lf > 0 && sh.label) {
-        ctx.save();
-        ctx.globalAlpha = lf;
-        ctx.font = '800 17px ui-rounded, system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        var ly = sh.land.y - 16 - (1 - lf) * 14;
-        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillText(sh.label + (sh.pts_v ? '  ·  ' + sh.pts_v : ''), sh.land.x + 1, ly + 1);
-        ctx.fillStyle = '#fff'; ctx.fillText(sh.label + (sh.pts_v ? '  ·  ' + sh.pts_v : ''), sh.land.x, ly);
-        ctx.restore();
-      }
-    }
+    drawBoard(c, alpha);
+    for (var i = 0; i < n; i++) drawShot(shots[i], i, el, c, alpha);
   }
 
-  var GRAV = 540;
-  function updateParticles(dt) {
-    var any = false;
-    for (var k = 0; k < MAXP; k++) { if (P[k].life > 0) { any = true; break; } }
-    if (!any) return;
-    ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    for (var i = 0; i < MAXP; i++) {
-      var p = P[i]; if (p.life <= 0) continue;
-      p.life -= dt; if (p.life <= 0) continue;
-      p.vy += GRAV * dt; p.x += p.vx * dt; p.y += p.vy * dt;
-      var a = p.life / p.max, r = 0.8 + 2.4 * a;
-      ctx.globalAlpha = a;
-      ctx.fillStyle = a > 0.55 ? 'rgba(255,255,255,1)' : rgba(p.c, 1);
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 6.2832); ctx.fill();
+  function drawBoard(c, alpha) {
+    function ring(rf, steps) { var a = []; for (var i = 0; i <= steps; i++) { var ang = i / steps * TWO_PI; a.push(project({ x: rf * Math.cos(ang), y: rf * Math.sin(ang), z: 0 }, c)); } return a; }
+    function poly(pts) { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); }
+    var outer = ring(1.0, 40);
+    ctx.save();
+    // board face (dark disc) so the orbit reads as a solid board
+    poly(outer); ctx.closePath(); ctx.fillStyle = 'rgba(10,12,16,' + (0.55 * alpha) + ')'; ctx.fill();
+    ctx.lineJoin = 'round';
+    // rings
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.12 * alpha) + ')'; ctx.lineWidth = 1.2;
+    poly(outer); ctx.closePath(); ctx.stroke();
+    var triple = ring(0.55, 40), dbl = ring(0.90, 40), bull = ring(0.09, 24);
+    poly(triple); ctx.closePath(); ctx.stroke();
+    poly(bull); ctx.closePath(); ctx.stroke();
+    ctx.strokeStyle = rgba(GOLD, 0.20 * alpha); ctx.lineWidth = 1.4;
+    poly(dbl); ctx.closePath(); ctx.stroke();
+    // spokes
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.07 * alpha) + ')'; ctx.lineWidth = 1;
+    for (var k = 0; k < 20; k++) {
+      var ang = (k * 18 + 9) * Math.PI / 180;
+      var a = project({ x: 0.09 * Math.cos(ang), y: 0.09 * Math.sin(ang), z: 0 }, c);
+      var b = project({ x: Math.cos(ang), y: Math.sin(ang), z: 0 }, c);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
     }
     ctx.restore();
   }
 
-  function setEnabled(b) { enabled = !!b; if (!b && ctx) ctx.clearRect(0, 0, W, H); }
-
-  // stop everything immediately (used when a replay is fast-forwarded)
-  function clear() {
-    shots.length = 0;
-    for (var k = 0; k < MAXP; k++) P[k].life = 0;
-    boardFade = 0;
-    if (raf && root.cancelAnimationFrame) { root.cancelAnimationFrame(raf); raf = 0; }
-    if (ctx) ctx.clearRect(0, 0, W, H);
+  function drawShot(sh, idx, el, c, alpha) {
+    var se = el - idx * FLY_GAP;
+    if (se <= 0) return;
+    var fp = Math.min(se / FLY_DUR, 1), fe = easeOutQuint(fp);
+    var headK = fe * sh.N, lastK = Math.min(Math.floor(headK), sh.N);
+    // project the flown trail
+    var proj = [];
+    for (var k = 0; k <= lastK; k++) proj.push(project(sh.pts[k], c));
+    if (fp < 1) { var f = headK - lastK, a = sh.pts[lastK], b = sh.pts[Math.min(lastK + 1, sh.N)]; proj.push(project({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f }, c)); }
+    drawTrail(proj, sh.c, alpha, fp);
+    var head = proj[proj.length - 1];
+    if (fp < 1) {
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      var rad = sh.sp.r * 0.5 * Math.min(2, head.s / 120 + 0.5);
+      ctx.globalAlpha = alpha; ctx.drawImage(sh.sp.canvas, head.x - rad, head.y - rad, rad * 2, rad * 2);
+      ctx.restore();
+    } else {
+      var lp = project(sh.pts[sh.N], c);
+      if (!visit.bursts[idx]) { visit.bursts[idx] = true; burst(lp.x, lp.y, sh.premium ? 20 : 10, sh.c, sh.premium ? 1.25 : 0.9); }
+      ctx.save();
+      ctx.globalAlpha = alpha; ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.beginPath(); ctx.arc(lp.x, lp.y, 3.0, 0, TWO_PI); ctx.fill();
+      ctx.fillStyle = rgba(sh.c, 1); ctx.beginPath(); ctx.arc(lp.x, lp.y, 1.5, 0, TWO_PI); ctx.fill();
+      ctx.restore();
+    }
   }
 
-  root.Tracer = { shoot: shoot, setEnabled: setEnabled, isEnabled: function () { return enabled; }, clear: clear };
+  function drawTrail(pts, col, alpha, fp) {
+    if (pts.length < 2) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    var n = pts.length;
+    for (var i = 1; i < n; i++) {
+      var s = i / (n - 1), ez = s * s;                       // brighter toward the head
+      var sc = (pts[i].s + pts[i - 1].s) / 240;
+      var w = (0.7 + 7.5 * ez) * Math.max(0.5, Math.min(1.8, sc)), a = (0.06 + 0.9 * ez) * alpha;
+      var x0 = pts[i - 1].x, y0 = pts[i - 1].y, x1 = pts[i].x, y1 = pts[i].y;
+      ctx.globalAlpha = a * 0.16; ctx.strokeStyle = rgba(col, 1); ctx.lineWidth = w * 4.0;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.globalAlpha = a * 0.42; ctx.strokeStyle = rgba(col, 1); ctx.lineWidth = w * 2.2;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.globalAlpha = a; ctx.strokeStyle = 'rgba(255,255,255,0.95)'; ctx.lineWidth = Math.max(1.1, w * 0.6);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function setEnabled(b) { enabled = !!b; if (!b) clear(); }
+
+  root.Tracer = {
+    playVisit: playVisit, shoot: shoot, skip: skip, clear: clear,
+    setEnabled: setEnabled, isEnabled: function () { return enabled; }
+  };
 })(typeof window !== 'undefined' ? window : this);
