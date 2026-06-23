@@ -8,9 +8,11 @@
 
   // ---------------- HOME ----------------
   function home(ctx) {
-    var resumes = '';
-    if (ctx.hasGame) resumes += '<button class="btn btn-accent btn-lg" data-act="resume">Resume game ▸</button>';
-    if (ctx.hasTournament) resumes += '<button class="btn btn-accent btn-lg" data-act="resumetourney">' + (ctx.tournamentDone ? '🏆 View tournament ▸' : 'Resume tournament ▸') + '</button>';
+    ctx = ctx || {};
+    var games = ctx.games || [];
+    var actions = '';
+    if (ctx.hasTournament) actions += '<button class="btn btn-accent btn-lg" data-act="resumetourney">' + (ctx.tournamentDone ? '🏆 View tournament ▸' : 'Resume tournament ▸') + '</button>';
+    if (ctx.canReset) actions += '<button class="icon-btn home-reset" data-act="reset">↺ Reset</button>';
     var cards = MODE_LIST.map(function (id) {
       var M = Modes[id];
       return '<button class="modecard" data-mode="' + id + '">' +
@@ -22,10 +24,31 @@
       '<div class="home-head">' +
       '<img class="brand-mark" src="./icons/icon-192.png" alt="">' +
       '<div class="brand">DART SHARK</div><div class="tag">Dart scoreboard · pick a game</div></div>' +
-      (resumes ? '<div class="home-actions">' + resumes + '</div>' : '') +
+      (actions ? '<div class="home-actions">' + actions + '</div>' : '') +
+      gamesList(games) +
       '<div class="pad-x"><button class="btn tcta btn-block btn-lg" data-act="tournament">🏆 Run a Tournament</button></div>' +
-      '<div class="section-label pad-x">Game modes</div>' +
+      '<div class="section-label pad-x">' + (games.length ? 'Start another match' : 'Game modes') + '</div>' +
       '<div class="modegrid">' + cards + '</div></div>';
+  }
+
+  // list of concurrent in-progress matches — each group's game lives here so several can run at once
+  function gamesList(games) {
+    if (!games.length) return '';
+    var rows = games.map(function (g) {
+      var M = Modes[g.modeId], names = g.players.map(function (p) { return p.name; }).join(', ');
+      var meta = M.name;
+      if (M.supportsLegs) meta += ' · Leg ' + g.leg;
+      else if (M.roundBased) meta += ' · Round ' + Math.min(g.round, g.roundLimit) + '/' + g.roundLimit;
+      var turn = g.players[g.current] ? h(g.players[g.current].name) + ' to throw' : '';
+      return '<div class="game-row" data-resume-game="' + h(g.id) + '" role="button">' +
+        '<div class="game-row-main"><div class="game-row-mode">' + h(meta) + '</div>' +
+        '<div class="game-row-players">' + h(names) + '</div>' +
+        (turn ? '<div class="game-row-turn">' + turn + '</div>' : '') + '</div>' +
+        '<span class="game-row-go" aria-hidden="true">▸</span>' +
+        '<button class="game-row-rm" data-rm-game="' + h(g.id) + '" aria-label="remove match">×</button></div>';
+    }).join('');
+    return '<div class="section-label pad-x">Matches in progress · ' + games.length + '</div>' +
+      '<div class="games-list pad-x">' + rows + '</div>';
   }
 
   // ---------------- TOURNAMENT helpers ----------------

@@ -21,12 +21,10 @@
     App.settings = Store.loadSettings();
     applySettings();
     registerSW();
+    Store.migrateOldGame();
     var tr = Store.loadTournament();
     App.tournament = (tr && tr.v === 2) ? tr : null;     // keep a finished tournament too (champion screen survives a relaunch)
-    var g = Store.loadGame();
-    App.hasGame = !!(g && !g.finished);
-    App.match = (g && !g.finished) ? g : null;
-    if (App.match && App.match._tMatch) App.tMatch = App.match._tMatch;   // resume a tourney match
+    App.match = null; App.tMatch = null;                 // home lists every in-progress match; one opens on demand
     App.screen = 'home';
     render();
     attachHandlers();
@@ -70,12 +68,14 @@
       case 'tsetup': html = UI.tournamentSetup(App.tSetupCtx); break;
       case 'tournament': html = UI.tournament(App.tournament, tNextMatch(App.tournament), {
         edit: App.tEdit,
-        live: (App.match && App.match._tMatch && !App.match.finished) ? App.match._tMatch : null,
+        live: liveTournamentRef(),
         standings: (App.tournament && App.tournament.format === 'rr') ? tStandings(App.tournament) : null
       }); break;
       default:
-        App.hasGame = !!(App.match && !App.match.finished);
-        html = UI.home({ hasGame: App.hasGame, hasTournament: !!App.tournament, tournamentDone: !!(App.tournament && App.tournament.champion != null) });
+        var games = Store.loadGames().filter(function (g) { return g && !g.finished && !g._tMatch; });
+        html = UI.home({ games: games, hasTournament: !!App.tournament,
+          tournamentDone: !!(App.tournament && App.tournament.champion != null),
+          canReset: games.length > 0 || !!App.tournament });
     }
     appEl.innerHTML = html;
     if (App.screen === 'game') { syncMult(); requestWake(); }
@@ -120,7 +120,7 @@
     var players = names.map(function (nm, i) { return { name: (String(nm || '').trim()) || ('Player ' + (i + 1)) }; });
     var n = players.length;
     var m = {
-      modeId: modeId, config: clone(config), players: players,
+      id: newGameId(), modeId: modeId, config: clone(config), players: players,
       ps: [], ms: {}, current: 0, startingPlayer: 0,
       turn: { darts: [], scored: 0, marks: 0 },
       leg: 1, round: 1, roundLimit: 0,
@@ -322,7 +322,7 @@
     UI.celebrate('win', kind === 'shanghai' ? 'SHANGHAI!' : 'GAME SHOT!', m.players[i].name + ' wins', true);
     if (App.settings.voice) Sound.say('Game shot, and the match, ' + m.players[i].name);
     Store.pushHistory({ mode: M.name, players: m.players.map(function (p) { return p.name; }), winner: m.players[i].name, date: dateStr() });
-    Store.clearGame();
+    removeGameFromStore(m.id);                                              // this match is done — drop it from the list
     if (App.tMatch && App.tournament) { tournamentMatchDone(i); return; }   // back to the bracket
     App.screen = 'over'; render();
   }
@@ -520,11 +520,24 @@
     for (var i = 0; i < ins.length; i++) { var k = +ins[i].dataset.tpi; if (App.tSetupCtx.names[k] !== undefined) App.tSetupCtx.names[k] = ins[i].value; }
   }
 
+  function findTournamentGame(ref) {
+    var list = Store.loadGames();
+    for (var i = 0; i < list.length; i++) if (!list[i].finished && list[i]._tMatch && sameRef(list[i]._tMatch, ref)) return list[i];
+    return null;
+  }
+  function liveTournamentRef() {                          // the next match has a saved (in-progress) game → show "Resume"
+    if (App.match && App.match._tMatch && !App.match.finished) return App.match._tMatch;
+    if (!App.tournament) return null;
+    var ref = tNextMatch(App.tournament);
+    return (ref && findTournamentGame(ref)) ? ref : null;
+  }
   function tPlayNext() {
     var t = App.tournament, ref = tNextMatch(t);
     if (!ref) return;
-    if (App.match && App.match._tMatch && sameRef(App.match._tMatch, ref) && !App.match.finished) {
-      App.tMatch = ref; App.tEdit = false; App.screen = 'game'; render(); return;   // resume the saved in-progress match
+    var existing = (App.match && App.match._tMatch && sameRef(App.match._tMatch, ref) && !App.match.finished) ? App.match : findTournamentGame(ref);
+    if (existing) {                                        // resume a saved in-progress match (open or from a prior session)
+      App.match = existing; App.tMatch = ref; App.undoStack = []; App.tEdit = false;
+      App.animating = false; App._anim = null; App.screen = 'game'; render(); return;
     }
     var mt = tGetMatch(t, ref);
     startMatch(t.modeId, t.config, [tName(t, mt.a), tName(t, mt.b)]);
@@ -540,8 +553,7 @@
     var t = App.tournament, ref = App.tMatch, mt = tGetMatch(t, ref);
     if (mt) mt.winner = (i === 0) ? mt.a : mt.b;     // winner by SEAT (0/1) — never by name
     tResolve(t);
-    App.tMatch = null; App.match = null;
-    Store.clearGame();
+    App.tMatch = null; App.match = null;                 // finishMatch already removed this game from the list
     Store.saveTournament(t);
     App.screen = 'tournament';
     render();
@@ -579,8 +591,42 @@
     Sound.play('tick');
   }
 
-  function persist() { if (App.match && !App.match.finished) Store.saveGame(App.match); }
-  function persistNow() { if (App.match && !App.match.finished) Store.saveGameNow(App.match); }
+  // ---------------- multiple concurrent matches ----------------
+  function newGameId() { return 'g' + Date.now() + '-' + Math.floor(Math.random() * 1000); }
+  function gameById(id) { var list = Store.loadGames(); for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; return null; }
+  function upsertGame(m, immediate) {
+    if (!m || !m.id) return;
+    var list = Store.loadGames(), found = false;
+    for (var i = 0; i < list.length; i++) if (list[i].id === m.id) { list[i] = m; found = true; break; }
+    if (!found) list.push(m);
+    if (immediate) Store.saveGamesNow(list); else Store.saveGames(list);
+  }
+  function removeGameFromStore(id) { Store.saveGamesNow(Store.loadGames().filter(function (g) { return g.id !== id; })); }
+
+  function persist() { if (App.match && !App.match.finished) upsertGame(App.match, false); }
+  function persistNow() { if (App.match && !App.match.finished) upsertGame(App.match, true); }
+
+  function resumeGame(id) {
+    var g = gameById(id);
+    if (!g) { render(); return; }
+    App.match = g; App.tMatch = g._tMatch || null;
+    App.undoStack = []; App.curMult = 1; App.animating = false; App._anim = null;
+    App.screen = 'game'; render();
+  }
+  function removeGame(id) {
+    if (root.confirm && !root.confirm('Remove this match?')) return;
+    removeGameFromStore(id);
+    if (App.match && App.match.id === id) { App.match = null; App.tMatch = null; }
+    render();
+  }
+  function doReset() {
+    if (root.confirm && !root.confirm('Clear every match in progress, the tournament, and saved names for a fresh start?')) return;
+    Store.clearGames(); Store.clearTournament(); Store.savePlayers(['Player 1', 'Player 2']);
+    App.match = null; App.tournament = null; App.tMatch = null; App.tEdit = false;
+    App.undoStack = []; App.animating = false; App._anim = null;
+    App.screen = 'home'; render();
+    UI.toast('Fresh start — ready for the next match');
+  }
 
   // ---------------- event handlers ----------------
   function attachHandlers() {
@@ -615,7 +661,7 @@
 
     appEl.addEventListener('click', function (e) {
       if (App.animating || (nowMs() - (App._skipAt || 0) < 400)) return;   // ignore the click that follows a skip tap
-      var t = e.target.closest('[data-act],[data-mode],[data-cfg],[data-toggle],[data-step],[data-rm],[data-set],[data-theme-set],[data-tmode],[data-tlegs],[data-tstart],[data-trm],[data-tformat],[data-tseedmode],[data-tpick],.modecard');
+      var t = e.target.closest('[data-act],[data-mode],[data-cfg],[data-toggle],[data-step],[data-rm],[data-set],[data-theme-set],[data-tmode],[data-tlegs],[data-tstart],[data-trm],[data-tformat],[data-tseedmode],[data-tpick],[data-resume-game],[data-rm-game],.modecard');
       if (!t) return;
       if (t.classList.contains('key') || t.classList.contains('mult')) return;
       handleClick(t);
@@ -634,6 +680,8 @@
 
   function handleClick(t) {
     var ds = t.dataset;
+    if (ds.rmGame) { removeGame(ds.rmGame); return; }       // × on a match row (check before resume)
+    if (ds.resumeGame) { resumeGame(ds.resumeGame); return; }
     if (ds.mode) { openSetup(ds.mode); return; }
     if (ds.tmode) { syncNamesT(); App.tSetupCtx.modeId = ds.tmode; render(); return; }
     if (ds.tlegs) { syncNamesT(); App.tSetupCtx.legsToWin = +ds.tlegs; render(); return; }
@@ -653,8 +701,8 @@
     if (!act) return;
     switch (act) {
       case 'home': goHome(); break;
-      case 'menu': persistNow(); App.screen = 'home'; render(); break;
-      case 'resume': App.screen = 'game'; render(); break;
+      case 'menu': persistNow(); App.match = null; App.tMatch = null; App.screen = 'home'; render(); break;   // background this match
+      case 'reset': doReset(); break;
       case 'history': App.screen = 'history'; render(); break;
       case 'settings': App.screen = 'settings'; render(); break;
       case 'tournament': openTournamentSetup(); break;
@@ -666,7 +714,7 @@
       case 'tedit': App.tEdit = !App.tEdit; render(); break;
       case 'tbracket': tBackToBracket(); break;
       case 'tnew': tNewTournament(); break;
-      case 'texit': App.tEdit = false; App.screen = 'home'; render(); break;
+      case 'texit': App.tEdit = false; App.match = null; App.tMatch = null; App.screen = 'home'; render(); break;
       case 'install': installHint(); break;
       case 'addp': addPlayer(); break;
       case 'start': doStart(); break;
@@ -707,7 +755,8 @@
   }
 
   function goHome() {
-    App.hasGame = !!(App.match && !App.match.finished);
+    if (App.match && !App.match.finished) persistNow();
+    App.match = null; App.tMatch = null;
     App.screen = 'home'; render();
   }
 
