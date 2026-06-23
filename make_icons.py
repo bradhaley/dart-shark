@@ -1,68 +1,29 @@
 #!/usr/bin/env python3
-"""Generate the Dart Shark app icon — an authentic dartboard with a bold steel
-shark fin rising in front of it — as PNGs, zero dependencies (stdlib only)."""
+"""Generate the Dart Shark app icon — a gold shark fin that doubles as a dart's
+flight, streaking into a bullseye on navy. Zero dependencies (stdlib only)."""
 import math
 import struct
 import zlib
 
-ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
+NAVY  = (16, 22, 41)
+GOLD  = (214, 178, 104)
+GOLDB = (233, 201, 128)
 
-BG        = (14, 15, 19)
-BLACK_SEG = (26, 26, 28)
-CREAM_SEG = (210, 202, 182)
-RED       = (200, 48, 40)
-GREEN     = (28, 124, 68)
-WIRE      = (62, 64, 70)
-
-FIN_TOP   = (228, 234, 242)   # bright steel near the tip
-FIN_BOT   = (96, 112, 132)    # darker steel near the base
-FIN_LINE  = (12, 13, 17)      # outline
-GOLD      = (240, 185, 70)    # accent (the eye)
-
-# Shark fin outline (normalized 0..1, y down), clockwise — raked back, notched rear.
+# shark fin (also the dart's flight), normalized 0..1, y down, leaning right
 FIN = [
-    (0.275, 0.745),                                                 # base left
-    (0.315, 0.62), (0.365, 0.50), (0.425, 0.385),
-    (0.495, 0.285), (0.565, 0.215), (0.625, 0.18),                  # apex (sharp, leaning right)
-    (0.655, 0.255), (0.695, 0.40), (0.735, 0.545), (0.765, 0.655),  # trailing edge to rear tip
-    (0.645, 0.625),                                                 # concave notch cut in
-    (0.705, 0.725),                                                 # rear foot
-    (0.585, 0.745),                                                 # base right
+    (0.200, 0.770), (0.255, 0.620), (0.330, 0.470), (0.430, 0.350),
+    (0.540, 0.270), (0.600, 0.235),                                   # tip
+    (0.590, 0.345), (0.567, 0.475), (0.545, 0.595), (0.520, 0.695), (0.500, 0.770),
 ]
+ARROW = [(0.665, 0.270), (0.762, 0.244), (0.706, 0.356)]             # dart point into the bull
+BULL   = (0.762, 0.248)
+DART_A = (0.455, 0.545)
+DART_B = (0.716, 0.292)
 
 
-def lerp(a, b, t):
+def blend(a, b, t):
     t = max(0.0, min(1.0, t))
-    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
-
-
-def board_color(px, py, size):
-    cx = cy = size / 2.0
-    dx = px - cx + 0.5
-    dy = py - cy + 0.5
-    r = math.hypot(dx, dy) / (size / 2.0)
-    if r > 0.96:
-        return BG
-    ang = math.degrees(math.atan2(dx, -dy)) % 360.0
-    seg = int(((ang + 9.0) % 360.0) // 18.0)
-    even = (seg % 2 == 0)
-    single_col = BLACK_SEG if even else CREAM_SEG
-    ring_col = RED if even else GREEN
-    if r < 0.055:    col = RED
-    elif r < 0.115:  col = GREEN
-    elif r < 0.585:  col = single_col
-    elif r < 0.66:   col = ring_col
-    elif r < 0.88:   col = single_col
-    elif r < 0.945:  col = ring_col
-    else:            col = (18, 19, 23)
-    seg_edge = (ang + 9.0) % 18.0
-    near_radial = (seg_edge < 0.5 or seg_edge > 17.5) and r > 0.115
-    near_ring = any(abs(r - e) < 0.006 for e in (0.055, 0.115, 0.585, 0.66, 0.88, 0.945))
-    if near_radial or near_ring:
-        col = lerp(col, WIRE, 0.7)
-    if r > 0.93:
-        col = lerp(col, BG, (r - 0.93) / 0.03)
-    return lerp(col, BG, 0.18)   # dim the board so the fin is the hero
+    return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
 
 
 def point_in_poly(x, y, poly):
@@ -78,50 +39,47 @@ def point_in_poly(x, y, poly):
     return inside
 
 
-def dist_to_poly(x, y, poly):
-    best = 1e9
-    n = len(poly)
-    for i in range(n):
-        ax, ay = poly[i]
-        bx, by = poly[(i + 1) % n]
-        dx, dy = bx - ax, by - ay
-        L2 = dx * dx + dy * dy
-        t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
-        px, py = ax + t * dx, ay + t * dy
-        d = math.hypot(x - px, y - py)
-        if d < best:
-            best = d
-    return best
+def dist_seg(x, y, a, b):
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    L2 = dx * dx + dy * dy
+    t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
+    return math.hypot(x - (ax + t * dx), y - (ay + t * dy))
 
 
-def pixel(px, py, size):
-    col = board_color(px, py, size)
-    nx, ny = (px + 0.5) / size, (py + 0.5) / size
-    if not (0.27 < nx < 0.79 and 0.18 < ny < 0.77):   # quick reject outside fin bbox
-        return col
-    inside = point_in_poly(nx, ny, FIN)
-    d = dist_to_poly(nx, ny, FIN)
-    if d < 0.012:
-        return FIN_LINE
-    if inside:
-        t = (ny - 0.205) / (0.74 - 0.205)
-        fin = lerp(FIN_TOP, FIN_BOT, t)
-        if nx < 0.48 and ny < 0.58:                   # sheen on the leading edge
-            fin = lerp(fin, (255, 255, 255), 0.20)
-        eye = math.hypot(nx - 0.515, ny - 0.40)       # gold eye
-        if eye < 0.030:
-            return GOLD if eye < 0.021 else FIN_LINE
-        return fin
+def sample(nx, ny):
+    col = NAVY
+    r = math.hypot(nx - BULL[0], ny - BULL[1])           # bullseye rings + dot
+    for R in (0.090, 0.048):
+        if abs(r - R) < 0.011:
+            col = blend(col, GOLD, 0.85)
+    if r < 0.024:
+        col = GOLDB
+    if dist_seg(nx, ny, DART_A, DART_B) < 0.017:         # dart shaft
+        col = GOLD
+    if point_in_poly(nx, ny, ARROW):                     # dart point
+        col = GOLDB
+    if point_in_poly(nx, ny, FIN):                       # fin (hero), subtle gradient
+        col = blend(GOLDB, GOLD, (ny - 0.235) / (0.77 - 0.235))
     return col
 
 
 def render(size):
     raw = bytearray()
+    ss = 3                                               # 3x3 supersample for clean edges
+    inv = 1.0 / (ss * ss)
     for y in range(size):
         raw.append(0)
         for x in range(size):
-            r, g, b = pixel(x, y, size)
-            raw += bytes((r, g, b, 255))
+            r = g = b = 0.0
+            for sy in range(ss):
+                for sx in range(ss):
+                    nx = (x + (sx + 0.5) / ss) / size
+                    ny = (y + (sy + 0.5) / ss) / size
+                    c = sample(nx, ny)
+                    r += c[0]; g += c[1]; b += c[2]
+            raw += bytes((round(r * inv), round(g * inv), round(b * inv), 255))
     return raw
 
 
