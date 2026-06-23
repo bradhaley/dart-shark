@@ -5,15 +5,15 @@
    ============================================================ */
 
 :root {
-  --bg:        oklch(0.185 0.006 270);   /* classic-modern neutral charcoal */
-  --bg-2:      oklch(0.228 0.007 270);
-  --bg-3:      oklch(0.272 0.008 270);
-  --bg-inset:  oklch(0.158 0.006 270);
-  --line:      oklch(0.320 0.008 270);
-  --line-soft: oklch(0.268 0.007 270);
-  --text:      oklch(0.968 0.003 270);
-  --text-dim:  oklch(0.720 0.010 270);
-  --text-faint:oklch(0.600 0.010 270);
+  --bg:        oklch(0.150 0.030 256);   /* deep navy */
+  --bg-2:      oklch(0.196 0.032 256);
+  --bg-3:      oklch(0.240 0.032 256);
+  --bg-inset:  oklch(0.122 0.028 256);
+  --line:      oklch(0.300 0.030 256);
+  --line-soft: oklch(0.238 0.028 256);
+  --text:      oklch(0.970 0.005 256);
+  --text-dim:  oklch(0.730 0.020 256);
+  --text-faint:oklch(0.600 0.022 256);
 
   --accent:      oklch(0.80 0.105 82);   /* refined classic gold */
   --accent-2:    oklch(0.86 0.095 84);
@@ -258,16 +258,8 @@ button, .key, .mult, .btn, .icon-btn, .modecard, .pcard {
 
 /* ---------- entry ---------- */
 .entry { background: var(--bg-inset); border-top: 1px solid var(--line-soft); padding: 10px 14px calc(10px + var(--safe-b)); }
-.turnstrip { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.turn-label { font-size: 13px; color: var(--text-dim); font-weight: 650; }
-.darts { display: flex; gap: 6px; flex: 1; }
-.dpip {
-  flex: 1; min-width: 0; text-align: center; background: var(--bg-2); border: 1px dashed var(--line);
-  border-radius: 10px; padding: 6px 4px; font-size: 14px; font-weight: 700; color: var(--text-faint);
-  transition: all var(--dur) var(--ease);
-}
-.dpip.filled { border-style: solid; border-color: var(--accent); color: var(--text); background: color-mix(in oklab, var(--accent) 12%, var(--bg-2)); }
-.dpip.bustpip { border-color: var(--red); color: var(--red); }
+.turnstrip { display: flex; align-items: center; gap: 10px; min-height: 26px; margin-bottom: 8px; padding: 0 2px; }
+.darts-line { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 650; letter-spacing: 0.01em; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums slashed-zero; }
 .turn-total { font-size: 18px; font-weight: 800; color: var(--accent); min-width: 54px; text-align: right; }
 
 .mults { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }

@@ -326,11 +326,7 @@
 
   function entry(m, M) {
     var dl = 3 - m.turn.darts.length;
-    var pips = '';
-    for (var i = 0; i < 3; i++) {
-      var d = m.turn.darts[i];
-      pips += '<div class="dpip' + (d ? ' filled' : '') + '">' + (d ? h(E.dartLabel(d)) : '·') + '</div>';
-    }
+    var thrown = m.turn.darts.map(function (d) { return E.dartLabel(d); }).join('  ·  ');
     var allowT = M.allow(m, 20).T, allowD = M.allow(m, 20).D;
     var keyNums = M.keyNumbers || null;
     var forced = M.forcedMult ? M.forcedMult(m) : null;     // around: doubles/trebles lock the multiplier
@@ -350,7 +346,7 @@
 
     return '<div class="entry">' +
       '<div class="turnstrip">' +
-      '<div class="darts">' + pips + '</div>' +
+      '<div class="darts-line">' + h(thrown) + '</div>' +
       '<div class="turn-total tnum">' + h(total) + '</div></div>' +
       '<div class="mults' + (forced ? ' locked' : '') + '">' +
       mult(1, 'Single', true) + mult(2, 'Double', allowD) + mult(3, 'Treble', allowT) + '</div>' +
@@ -437,7 +433,7 @@
     var FONT = '"Hanken Grotesk", "Inter", -apple-system, "SF Pro Display", system-ui, sans-serif';
     var cv = document.createElement('canvas'); cv.width = W * S; cv.height = H * S;
     var c = cv.getContext('2d'); c.scale(S, S);
-    c.fillStyle = '#16181d'; c.fillRect(0, 0, W, H);
+    c.fillStyle = '#111729'; c.fillRect(0, 0, W, H);
     c.textAlign = 'center';
     c.font = '40px ' + FONT; c.fillText('🏆', W / 2, 64);
     c.font = '800 34px ' + FONT; c.fillStyle = '#d8b46a'; c.fillText(m.players[win].name + ' wins', W / 2, 108);
@@ -445,7 +441,7 @@
     var tiles = recapTiles(m, win).slice(0, 4), tx = 30, ty = 158, tw = (W - 60 - 14) / 2, th = 76;
     tiles.forEach(function (t, idx) {
       var X = tx + (idx % 2) * (tw + 14), Y = ty + Math.floor(idx / 2) * (th + 14);
-      c.fillStyle = '#1e2127'; rrect(c, X, Y, tw, th, 12); c.fill();
+      c.fillStyle = '#1c2438'; rrect(c, X, Y, tw, th, 12); c.fill();
       c.textAlign = 'left'; c.font = '500 13px ' + FONT; c.fillStyle = '#9aa0aa'; c.fillText(String(t.label), X + 16, Y + 28);
       c.font = '800 29px ' + FONT; c.fillStyle = idx === 2 ? '#d8b46a' : '#f4f5f7'; c.fillText(String(t.value), X + 16, Y + 60);
     });
@@ -453,7 +449,7 @@
     var px = 30, pw = W - 60;
     if (m.players.length === 2) {
       var l0 = M.statLines(m, 0), l1 = M.statLines(m, 1), n = Math.min(5, l0.length), ph = 40 + n * 30;
-      c.fillStyle = '#1e2127'; rrect(c, px, y, pw, ph, 12); c.fill();
+      c.fillStyle = '#1c2438'; rrect(c, px, y, pw, ph, 12); c.fill();
       c.font = '700 16px ' + FONT;
       c.textAlign = 'left'; c.fillStyle = win === 0 ? '#d8b46a' : '#f4f5f7'; c.fillText(m.players[0].name, px + 16, y + 26);
       c.textAlign = 'right'; c.fillStyle = win === 1 ? '#d8b46a' : '#f4f5f7'; c.fillText(m.players[1].name, px + pw - 16, y + 26);
@@ -468,7 +464,7 @@
       var rk = m.rank.slice(0, 4);
       rk.forEach(function (i, pos) {
         var ry = y + pos * 44;
-        c.fillStyle = '#1e2127'; rrect(c, px, ry, pw, 36, 10); c.fill();
+        c.fillStyle = '#1c2438'; rrect(c, px, ry, pw, 36, 10); c.fill();
         c.textAlign = 'left'; c.font = '700 15px ' + FONT; c.fillStyle = pos === 0 ? '#d8b46a' : '#f4f5f7';
         c.fillText((pos === 0 ? '1  ' : (pos + 1) + '  ') + m.players[i].name, px + 14, ry + 23);
         c.textAlign = 'right'; c.font = '600 14px ' + FONT; c.fillStyle = '#9aa0aa';
