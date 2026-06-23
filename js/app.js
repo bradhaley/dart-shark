@@ -75,7 +75,7 @@
         var games = Store.loadGames().filter(function (g) { return g && !g.finished && !g._tMatch; });
         html = UI.home({ games: games, hasTournament: !!App.tournament,
           tournamentDone: !!(App.tournament && App.tournament.champion != null),
-          canReset: games.length > 0 || !!App.tournament });
+          canReset: games.length > 0 || !!App.tournament, theme: App.settings.theme });
     }
     appEl.innerHTML = html;
     if (App.screen === 'game') { syncMult(); requestWake(); }
@@ -705,6 +705,7 @@
       case 'home': goHome(); break;
       case 'menu': persistNow(); App.match = null; App.tMatch = null; App.screen = 'home'; render(); break;   // background this match
       case 'reset': doReset(); break;
+      case 'theme': App.settings.theme = (App.settings.theme === 'light' ? 'dark' : 'light'); applySettings(); Store.saveSettings(App.settings); render(); break;
       case 'history': App.screen = 'history'; render(); break;
       case 'settings': App.screen = 'settings'; render(); break;
       case 'tournament': openTournamentSetup(); break;

@@ -5,20 +5,20 @@
    ============================================================ */
 
 :root {
-  --bg:        oklch(0.165 0.014 256);
-  --bg-2:      oklch(0.205 0.017 256);
-  --bg-3:      oklch(0.245 0.020 256);
-  --bg-inset:  oklch(0.145 0.013 256);
-  --line:      oklch(0.32 0.020 256);
-  --line-soft: oklch(0.28 0.018 256);
-  --text:      oklch(0.965 0.008 256);
-  --text-dim:  oklch(0.74 0.014 256);
-  --text-faint:oklch(0.56 0.015 256);
+  --bg:        oklch(0.185 0.006 270);   /* classic-modern neutral charcoal */
+  --bg-2:      oklch(0.228 0.007 270);
+  --bg-3:      oklch(0.272 0.008 270);
+  --bg-inset:  oklch(0.158 0.006 270);
+  --line:      oklch(0.320 0.008 270);
+  --line-soft: oklch(0.268 0.007 270);
+  --text:      oklch(0.968 0.003 270);
+  --text-dim:  oklch(0.720 0.010 270);
+  --text-faint:oklch(0.600 0.010 270);
 
-  --accent:      oklch(0.82 0.150 79);   /* tungsten gold */
-  --accent-2:    oklch(0.86 0.130 85);
-  --accent-press:oklch(0.74 0.150 79);
-  --on-accent:   oklch(0.24 0.050 79);
+  --accent:      oklch(0.80 0.105 82);   /* refined classic gold */
+  --accent-2:    oklch(0.86 0.095 84);
+  --accent-press:oklch(0.72 0.105 82);
+  --on-accent:   oklch(0.24 0.045 82);
 
   --green: oklch(0.74 0.150 152);
   --green-dim: oklch(0.55 0.10 152);
@@ -42,8 +42,9 @@
   --ease: cubic-bezier(0.23, 1, 0.32, 1);
   --dur: 220ms;
 
-  --font: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --num: "SF Pro Rounded", ui-rounded, system-ui, sans-serif;
+  --font: "Inter", -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Hanken Grotesk", -apple-system, "SF Pro Display", system-ui, "Segoe UI", sans-serif;
+  --num: "Inter", -apple-system, "SF Pro Text", system-ui, sans-serif;
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
@@ -51,20 +52,21 @@
 }
 
 [data-theme="light"] {
-  --bg:        oklch(0.97 0.006 256);
-  --bg-2:      oklch(0.99 0.004 256);
-  --bg-3:      oklch(0.95 0.008 256);
-  --bg-inset:  oklch(0.93 0.008 256);
-  --line:      oklch(0.86 0.010 256);
-  --line-soft: oklch(0.90 0.008 256);
-  --text:      oklch(0.22 0.020 256);
-  --text-dim:  oklch(0.44 0.018 256);
-  --text-faint:oklch(0.58 0.016 256);
-  --accent:      oklch(0.70 0.150 70);
-  --accent-press:oklch(0.62 0.150 70);
-  --on-accent:   oklch(0.99 0.02 85);
-  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.08), 0 2px 8px oklch(0 0 0 / 0.06);
-  --shadow-2: 0 8px 28px oklch(0 0 0 / 0.12);
+  --bg:        oklch(0.975 0.002 270);
+  --bg-2:      oklch(0.995 0.001 270);
+  --bg-3:      oklch(0.955 0.003 270);
+  --bg-inset:  oklch(0.935 0.003 270);
+  --line:      oklch(0.870 0.004 270);
+  --line-soft: oklch(0.915 0.003 270);
+  --text:      oklch(0.240 0.008 270);
+  --text-dim:  oklch(0.460 0.010 270);
+  --text-faint:oklch(0.600 0.010 270);
+  --accent:      oklch(0.66 0.115 76);
+  --accent-2:    oklch(0.60 0.115 76);
+  --accent-press:oklch(0.58 0.115 76);
+  --on-accent:   oklch(0.99 0.015 90);
+  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.06), 0 2px 8px oklch(0 0 0 / 0.05);
+  --shadow-2: 0 8px 28px oklch(0 0 0 / 0.10);
 }
 
 * { box-sizing: border-box; }
@@ -77,6 +79,10 @@ html, body {
 }
 body { overflow: hidden; }
 .tnum { font-variant-numeric: tabular-nums slashed-zero; font-feature-settings: "tnum" 1, "zero" 1; }
+h1, h2, .brand, .fx-big, .fx-total, .champ-name, .modecard h3, .over-head h1 {
+  font-family: var(--font-display); letter-spacing: -0.012em;
+}
+.pbig, .recap-tile-v, .turn-total, .t-cta-match { font-family: var(--num); }
 
 .app {
   position: fixed; inset: 0;

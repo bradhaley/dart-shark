@@ -13,6 +13,7 @@
     var actions = '';
     if (ctx.hasTournament) actions += '<button class="btn btn-accent btn-lg" data-act="resumetourney">' + (ctx.tournamentDone ? '🏆 View tournament ▸' : 'Resume tournament ▸') + '</button>';
     if (ctx.canReset) actions += '<button class="icon-btn home-reset" data-act="reset">↺ Reset</button>';
+    actions += '<button class="icon-btn home-theme" data-act="theme" aria-label="switch light or dark mode">' + (ctx.theme === 'light' ? '☾ Dark' : '☀ Light') + '</button>';
     var cards = MODE_LIST.map(function (id) {
       var M = Modes[id];
       return '<button class="modecard" data-mode="' + id + '">' +
@@ -432,42 +433,43 @@
   // render the recap to a PNG and share it (Web Share on iPad) or download it
   function rrect(c, x, y, w, hh, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + hh, r); c.arcTo(x + w, y + hh, x, y + hh, r); c.arcTo(x, y + hh, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
   function buildRecapCanvas(m) {
-    var M = Modes[m.modeId], win = m.winner, S = 2, W = 540, H = 624, FONT = '"SF Pro Rounded", ui-rounded, system-ui, sans-serif';
+    var M = Modes[m.modeId], win = m.winner, S = 2, W = 540, H = 624;
+    var FONT = '"Hanken Grotesk", "Inter", -apple-system, "SF Pro Display", system-ui, sans-serif';
     var cv = document.createElement('canvas'); cv.width = W * S; cv.height = H * S;
     var c = cv.getContext('2d'); c.scale(S, S);
-    c.fillStyle = '#15171d'; c.fillRect(0, 0, W, H);
+    c.fillStyle = '#16181d'; c.fillRect(0, 0, W, H);
     c.textAlign = 'center';
     c.font = '40px ' + FONT; c.fillText('🏆', W / 2, 64);
-    c.font = '800 34px ' + FONT; c.fillStyle = '#e9b84a'; c.fillText(m.players[win].name + ' wins', W / 2, 108);
+    c.font = '800 34px ' + FONT; c.fillStyle = '#d8b46a'; c.fillText(m.players[win].name + ' wins', W / 2, 108);
     c.font = '500 16px ' + FONT; c.fillStyle = '#9aa0aa'; c.fillText(recapSub(m), W / 2, 134);
     var tiles = recapTiles(m, win).slice(0, 4), tx = 30, ty = 158, tw = (W - 60 - 14) / 2, th = 76;
     tiles.forEach(function (t, idx) {
       var X = tx + (idx % 2) * (tw + 14), Y = ty + Math.floor(idx / 2) * (th + 14);
-      c.fillStyle = '#1d2027'; rrect(c, X, Y, tw, th, 12); c.fill();
+      c.fillStyle = '#1e2127'; rrect(c, X, Y, tw, th, 12); c.fill();
       c.textAlign = 'left'; c.font = '500 13px ' + FONT; c.fillStyle = '#9aa0aa'; c.fillText(String(t.label), X + 16, Y + 28);
-      c.font = '800 29px ' + FONT; c.fillStyle = idx === 2 ? '#e9b84a' : '#eef0f4'; c.fillText(String(t.value), X + 16, Y + 60);
+      c.font = '800 29px ' + FONT; c.fillStyle = idx === 2 ? '#d8b46a' : '#f4f5f7'; c.fillText(String(t.value), X + 16, Y + 60);
     });
     var y = ty + 2 * th + 14 + 18;
     var px = 30, pw = W - 60;
     if (m.players.length === 2) {
       var l0 = M.statLines(m, 0), l1 = M.statLines(m, 1), n = Math.min(5, l0.length), ph = 40 + n * 30;
-      c.fillStyle = '#1d2027'; rrect(c, px, y, pw, ph, 12); c.fill();
+      c.fillStyle = '#1e2127'; rrect(c, px, y, pw, ph, 12); c.fill();
       c.font = '700 16px ' + FONT;
-      c.textAlign = 'left'; c.fillStyle = win === 0 ? '#e9b84a' : '#eef0f4'; c.fillText(m.players[0].name, px + 16, y + 26);
-      c.textAlign = 'right'; c.fillStyle = win === 1 ? '#e9b84a' : '#eef0f4'; c.fillText(m.players[1].name, px + pw - 16, y + 26);
+      c.textAlign = 'left'; c.fillStyle = win === 0 ? '#d8b46a' : '#f4f5f7'; c.fillText(m.players[0].name, px + 16, y + 26);
+      c.textAlign = 'right'; c.fillStyle = win === 1 ? '#d8b46a' : '#f4f5f7'; c.fillText(m.players[1].name, px + pw - 16, y + 26);
       c.textAlign = 'center'; c.fillStyle = '#6b7079'; c.font = '500 12px ' + FONT; c.fillText('vs', W / 2, y + 26);
       for (var k = 0; k < n; k++) {
         var ry = y + 40 + k * 30 + 18;
-        c.textAlign = 'left'; c.font = '700 16px ' + FONT; c.fillStyle = win === 0 ? '#e9b84a' : '#eef0f4'; c.fillText(String(l0[k].value), px + 16, ry);
+        c.textAlign = 'left'; c.font = '700 16px ' + FONT; c.fillStyle = win === 0 ? '#d8b46a' : '#f4f5f7'; c.fillText(String(l0[k].value), px + 16, ry);
         c.textAlign = 'center'; c.font = '500 12px ' + FONT; c.fillStyle = '#9aa0aa'; c.fillText(String(l0[k].label), W / 2, ry);
-        c.textAlign = 'right'; c.font = '700 16px ' + FONT; c.fillStyle = win === 1 ? '#e9b84a' : '#eef0f4'; c.fillText(String(l1[k] ? l1[k].value : ''), px + pw - 16, ry);
+        c.textAlign = 'right'; c.font = '700 16px ' + FONT; c.fillStyle = win === 1 ? '#d8b46a' : '#f4f5f7'; c.fillText(String(l1[k] ? l1[k].value : ''), px + pw - 16, ry);
       }
     } else {
       var rk = m.rank.slice(0, 4);
       rk.forEach(function (i, pos) {
         var ry = y + pos * 44;
-        c.fillStyle = '#1d2027'; rrect(c, px, ry, pw, 36, 10); c.fill();
-        c.textAlign = 'left'; c.font = '700 15px ' + FONT; c.fillStyle = pos === 0 ? '#e9b84a' : '#eef0f4';
+        c.fillStyle = '#1e2127'; rrect(c, px, ry, pw, 36, 10); c.fill();
+        c.textAlign = 'left'; c.font = '700 15px ' + FONT; c.fillStyle = pos === 0 ? '#d8b46a' : '#f4f5f7';
         c.fillText((pos === 0 ? '1  ' : (pos + 1) + '  ') + m.players[i].name, px + 14, ry + 23);
         c.textAlign = 'right'; c.font = '600 14px ' + FONT; c.fillStyle = '#9aa0aa';
         c.fillText(M.id === 'x01' ? (avg3(m.stats[i]) + ' avg') : String(M.statLines(m, i)[0].value), px + pw - 14, ry + 23);
